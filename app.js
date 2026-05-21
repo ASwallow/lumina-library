@@ -1746,8 +1746,8 @@ function bindEvents() {
     document.addEventListener('keydown', e => {
         if (!document.getElementById('reader-overlay').classList.contains('open')) return;
         switch (e.key) {
-            case 'ArrowLeft': case 'a': prevPage(); break;
-            case 'ArrowRight': case 'd': nextPage(); break;
+            case 'ArrowLeft': prevPage(); break;
+            case 'ArrowRight': nextPage(); break;
             case 'Escape': closeReader(); break;
             case '+': case '=': zoomIn(); break;
             case '-': zoomOut(); break;
