@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lumina Library</title>
+    <!-- 本地依赖 -->
+    <script src="lib/tailwind.js"></script>
+    <script>
+        tailwind.config = {
+            theme: { extend: {} }
+        }
+    </script>
+    <script src="lib/lucide.min.js"></script>
+    <script src="lib/localforage.min.js"></script>
+    <script src="lib/chart.umd.min.js"></script>
+    <script src="lib/pdf.min.js"></script>
+    <script src="lib/marked.min.js"></script>
+    <script src="lib/signature_pad.min.js"></script>
+    <link rel="stylesheet" href="lib/katex.min.css">
+    <script src="lib/katex.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- 导航栏 -->
+    <nav class="top-nav">
+        <div class="nav-left">
+            <div class="nav-logo">
+                <i data-lucide="book-open"></i>
+            </div>
+            <span class="nav-title">Lumina Library</span>
+        </div>
+        <div class="nav-center">
+            <button class="nav-item active" data-tab="shelf">
+                <i data-lucide="library"></i> 书架
+            </button>
+            <button class="nav-item" data-tab="dashboard">
+                <i data-lucide="bar-chart-3"></i> 统计
+            </button>
+        </div>
+        <div class="nav-right">
+            <button class="theme-toggle" id="theme-toggle" title="切换主题">
+                <i data-lucide="moon" id="theme-icon"></i>
+            </button>
+            <label class="btn btn-primary" id="import-btn">
+                <i data-lucide="upload"></i> 批量导入
+                <input type="file" accept=".pdf" multiple hidden>
+            </label>
+        </div>
+    </nav>
+
+    <!-- 书架页 -->
+    <main id="page-shelf">
+        <div id="tag-filter-bar"></div>
+        <div class="shelf-actions" id="shelf-actions">
+            <button class="btn btn-outline" id="btn-dedup" title="去除同名重复书籍">
+                <i data-lucide="copy-minus"></i> 一键去重
+            </button>
+        </div>
+        <div id="shelf-container"></div>
+    </main>
+
+    <!-- 统计页 -->
+    <main id="page-dashboard" class="hidden">
+        <div class="dashboard-wrap">
+            <h2 class="section-title">阅读统计</h2>
+            <div class="stat-cards">
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-total">0</div>
+                    <div class="stat-label">藏书总数</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-time">0h</div>
+                    <div class="stat-label">累计阅读</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-opened">0</div>
+                    <div class="stat-label">阅读次数</div>
+                </div>
+            </div>
+            <div class="chart-grid">
+                <div class="chart-card">
+                    <h3 class="chart-title">阅读时长（按周）</h3>
+                    <canvas id="chart-weekly"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3 class="chart-title">书籍标签分布</h3>
+                    <canvas id="chart-tags"></canvas>
+                </div>
+            </div>
+            <!-- 单本书阅读时长 -->
+            <div class="chart-card" style="margin-top:24px;">
+                <h3 class="chart-title">各书阅读时长</h3>
+                <div id="per-book-stats"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 书籍详情弹层 -->
+    <div class="detail-overlay" id="detail-overlay">
+        <div class="detail-bg" id="detail-bg"></div>
+        <div class="detail-content" id="detail-content"></div>
+    </div>
+
+    <!-- PDF 阅读器全屏 -->
+    <div class="reader-overlay" id="reader-overlay">
+        <div class="reader-toolbar">
+            <div class="reader-toolbar-left">
+                <button class="btn" id="btn-close-reader">
+                    <i data-lucide="arrow-left"></i> 返回
+                </button>
+                <span class="reader-title" id="reader-title"></span>
+            </div>
+            <div class="reader-mode-selector">
+                <button class="mode-btn active" data-mode="single" title="单页模式">
+                    <i data-lucide="file-text"></i> 单页
+                </button>
+                <button class="mode-btn" data-mode="double" title="双页模式">
+                    <i data-lucide="book-open"></i> 双页
+                </button>
+                <button class="mode-btn" data-mode="scroll" title="滚动模式">
+                    <i data-lucide="chevrons-down"></i> 滚动
+                </button>
+            </div>
+            <div class="reader-toolbar-right">
+                <button class="btn" id="btn-prev-page">
+                    <i data-lucide="chevron-left"></i>
+                </button>
+                <span class="reader-page-info" id="page-indicator">1 / 1</span>
+                <button class="btn" id="btn-next-page">
+                    <i data-lucide="chevron-right"></i>
+                </button>
+                <button class="btn" id="btn-zoom-out">
+                    <i data-lucide="minus"></i>
+                </button>
+                <span class="reader-zoom-info" id="zoom-indicator">100%</span>
+                <button class="btn" id="btn-zoom-in">
+                    <i data-lucide="plus"></i>
+                </button>
+                <button class="btn" id="btn-toggle-notes-panel" title="笔记">
+                    <i data-lucide="sticky-note"></i>
+                </button>
+            </div>
+        </div>
+        <div class="progress-bar" id="reader-progress-bar">
+            <div class="progress-fill" id="reader-progress-fill"></div>
+        </div>
+        <div class="reader-main">
+            <div class="reader-body" id="reader-body"></div>
+            <div class="notes-panel collapsed" id="notes-panel">
+                <div class="notes-panel-resize" id="notes-panel-resize"></div>
+                <div class="notes-panel-header">
+                    <span>笔记</span>
+                    <button class="btn-icon" id="btn-close-notes-panel" title="收起">
+                        <i data-lucide="panel-right-close"></i>
+                    </button>
+                </div>
+                <div class="notes-tabs">
+                    <button class="notes-tab active" data-notes-tab="write">编写</button>
+                    <button class="notes-tab" data-notes-tab="preview">预览</button>
+                    <button class="notes-tab" data-notes-tab="draw">手写</button>
+                </div>
+                <div class="notes-content">
+                    <textarea id="notes-textarea" class="notes-textarea" placeholder="支持 Markdown 语法..."></textarea>
+                    <div id="notes-preview" class="notes-preview hidden"></div>
+                    <div id="notes-draw-wrap" class="notes-draw hidden">
+                        <canvas id="draw-canvas"></canvas>
+                        <div class="draw-actions">
+                            <button class="btn btn-sm" id="btn-undo-draw">
+                                <i data-lucide="undo-2"></i> 撤销
+                            </button>
+                            <button class="btn btn-sm" id="btn-clear-draw">
+                                <i data-lucide="trash-2"></i> 清除
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 今日推荐弹窗 -->
+    <div class="recommend-overlay" id="recommend-overlay">
+        <div class="recommend-backdrop" id="recommend-backdrop"></div>
+        <div class="recommend-card">
+            <div class="recommend-inner">
+                <div class="recommend-label">今日推荐</div>
+                <div class="recommend-cover" id="recommend-cover"></div>
+                <h3 class="recommend-book-title" id="recommend-title"></h3>
+                <p class="recommend-quote" id="recommend-quote"></p>
+            </div>
+            <button class="btn btn-primary recommend-close-btn" id="btn-close-recommend">知道了</button>
+        </div>
+    </div>
+
+    <!-- 封面生成器 -->
+    <div class="modal-overlay" id="cover-gen-modal">
+        <div class="modal-card">
+            <div class="modal-header">
+                <h3>艺术封面生成器</h3>
+                <button class="btn-icon" id="btn-close-cover-gen">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            <div class="cover-canvas-wrap">
+                <canvas id="cover-canvas" width="300" height="440"></canvas>
+            </div>
+            <div class="modal-actions">
+                <button class="btn" id="btn-regen-cover">
+                    <i data-lucide="wand-2"></i> 重新生成
+                </button>
+                <button class="btn btn-primary" id="btn-apply-cover">应用封面</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 悬浮推荐按钮 -->
+    <button class="fab" id="fab-recommend" title="今日推荐">
+        <i data-lucide="sparkles"></i>
+    </button>
+
+    <!-- 导入进度提示 -->
+    <div class="import-toast" id="import-toast">
+        <div class="spinner"></div>
+        <span id="import-toast-text">正在导入...</span>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

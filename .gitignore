@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+
+# Tauri build output
+src-tauri/target/
+
+# Frontend build output
+dist/
+
+# Release binaries
+release/*.exe
+release/*.msi
+release/Lumina Library/
+
+# Large downloaded tools
+nsis-3.11/
+nsis-3.11.zip
+rustup-init.exe
+vs_buildtools.exe
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+
+# Claude
+.claude/
+
+# Env / secrets
+.env
+.env.*
+*.key
+*.pem

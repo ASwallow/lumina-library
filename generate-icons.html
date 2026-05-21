@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html><body>
+<canvas id="c"></canvas>
+<script>
+// 生成应用图标
+const sizes = [32, 128, 256];
+const canvas = document.getElementById('c');
+
+function genIcon(size) {
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    // 背景渐变
+    const g = ctx.createLinearGradient(0, 0, size, size);
+    g.addColorStop(0, '#4f46e5');
+    g.addColorStop(1, '#7c3aed');
+    ctx.fillStyle = g;
+    // 圆角矩形
+    const r = size * 0.2;
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(size - r, 0);
+    ctx.quadraticCurveTo(size, 0, size, r);
+    ctx.lineTo(size, size - r);
+    ctx.quadraticCurveTo(size, size, size - r, size);
+    ctx.lineTo(r, size);
+    ctx.quadraticCurveTo(0, size, 0, size - r);
+    ctx.lineTo(0, r);
+    ctx.quadraticCurveTo(0, 0, r, 0);
+    ctx.closePath();
+    ctx.fill();
+    // 书本图标
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    const cx = size / 2, cy = size / 2;
+    const s = size * 0.12;
+    // 书脊
+    ctx.fillRect(cx - s * 0.1, cy - s * 1.5, s * 0.2, s * 3);
+    // 左页
+    ctx.beginPath();
+    ctx.moveTo(cx - s * 0.1, cy - s * 1.2);
+    ctx.quadraticCurveTo(cx - s * 1.8, cy - s * 1.5, cx - s * 2.5, cy - s * 1.8);
+    ctx.lineTo(cx - s * 2.5, cy + s * 1.2);
+    ctx.quadraticCurveTo(cx - s * 1.8, cy + s * 0.9, cx - s * 0.1, cy + s * 0.6);
+    ctx.fill();
+    // 右页
+    ctx.beginPath();
+    ctx.moveTo(cx + s * 0.1, cy - s * 1.2);
+    ctx.quadraticCurveTo(cx + s * 1.8, cy - s * 1.5, cx + s * 2.5, cy - s * 1.8);
+    ctx.lineTo(cx + s * 2.5, cy + s * 1.2);
+    ctx.quadraticCurveTo(cx + s * 1.8, cy + s * 0.9, cx + s * 0.1, cy + s * 0.6);
+    ctx.fill();
+    // 下载为 PNG
+    const link = document.createElement('a');
+    link.download = size + 'x' + size + '.png';
+    link.href = canvas.toDataURL('image/png');
+    link.click();
+}
+
+// 依次生成各尺寸（浏览器会逐个下载）
+sizes.forEach((s, i) => setTimeout(() => genIcon(s), i * 500));
+</script>
+</body></html>
