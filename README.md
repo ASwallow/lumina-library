@@ -1,4 +1,4 @@
-# Lumina Library
+# yread Lib
 
 一个基于 Tauri v2 的本地 PDF 阅读器，支持电子书与论文的管理、阅读、笔记批注。
 
