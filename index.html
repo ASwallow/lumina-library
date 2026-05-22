@@ -35,6 +35,9 @@
             <button class="nav-item active" data-tab="shelf">
                 <i data-lucide="library"></i> 书架
             </button>
+            <button class="nav-item" data-tab="papers">
+                <i data-lucide="file-text"></i> 论文
+            </button>
             <button class="nav-item" data-tab="dashboard">
                 <i data-lucide="bar-chart-3"></i> 统计
             </button>
@@ -44,7 +47,7 @@
                 <i data-lucide="moon" id="theme-icon"></i>
             </button>
             <label class="btn btn-primary" id="import-btn">
-                <i data-lucide="upload"></i> 批量导入
+                <i data-lucide="upload"></i> <span id="import-btn-label">批量导入</span>
                 <input type="file" accept=".pdf" multiple hidden>
             </label>
         </div>
@@ -59,6 +62,18 @@
             </button>
         </div>
         <div id="shelf-container"></div>
+    </main>
+
+    <!-- 论文页 -->
+    <main id="page-papers" class="hidden">
+        <div id="paper-tag-filter-bar" class="tag-filter-bar-wrap"></div>
+        <div id="paper-status-filter-bar" class="status-filter-bar"></div>
+        <div class="shelf-actions">
+            <button class="btn btn-outline" id="btn-paper-dedup" title="去除同名重复论文">
+                <i data-lucide="copy-minus"></i> 一键去重
+            </button>
+        </div>
+        <div id="papers-container" class="papers-grid-wrap"></div>
     </main>
 
     <!-- 统计页 -->
@@ -79,20 +94,48 @@
                     <div class="stat-label">阅读次数</div>
                 </div>
             </div>
+            <!-- 书籍统计 -->
+            <h3 class="section-subtitle"><i data-lucide="library"></i> 书籍</h3>
+            <div class="stat-cards stat-cards-sm">
+                <div class="stat-card"><div class="stat-number" id="stat-books-count">0</div><div class="stat-label">藏书</div></div>
+                <div class="stat-card"><div class="stat-number" id="stat-books-time">0h</div><div class="stat-label">阅读时长</div></div>
+                <div class="stat-card"><div class="stat-number" id="stat-books-sessions">0</div><div class="stat-label">阅读次数</div></div>
+            </div>
             <div class="chart-grid">
                 <div class="chart-card">
-                    <h3 class="chart-title">阅读时长（按周）</h3>
-                    <canvas id="chart-weekly"></canvas>
+                    <h3 class="chart-title">书籍阅读时长（按周）</h3>
+                    <canvas id="chart-books-weekly"></canvas>
                 </div>
                 <div class="chart-card">
                     <h3 class="chart-title">书籍标签分布</h3>
-                    <canvas id="chart-tags"></canvas>
+                    <canvas id="chart-books-tags"></canvas>
                 </div>
             </div>
-            <!-- 单本书阅读时长 -->
             <div class="chart-card" style="margin-top:24px;">
                 <h3 class="chart-title">各书阅读时长</h3>
                 <div id="per-book-stats"></div>
+            </div>
+            <!-- 论文统计 -->
+            <h3 class="section-subtitle"><i data-lucide="file-text"></i> 论文</h3>
+            <div class="stat-cards stat-cards-sm">
+                <div class="stat-card"><div class="stat-number" id="stat-papers-count">0</div><div class="stat-label">论文数</div></div>
+                <div class="stat-card"><div class="stat-number" id="stat-papers-time">0h</div><div class="stat-label">阅读时长</div></div>
+                <div class="stat-card"><div class="stat-number" id="stat-papers-sessions">0</div><div class="stat-label">阅读次数</div></div>
+                <div class="stat-card"><div class="stat-number" id="stat-papers-finished">0</div><div class="stat-label">已读完</div></div>
+            </div>
+            <div class="chart-grid">
+                <div class="chart-card">
+                    <h3 class="chart-title">论文阅读时长（按周）</h3>
+                    <canvas id="chart-papers-weekly"></canvas>
+                </div>
+                <div class="chart-card">
+                    <h3 class="chart-title">论文标签分布</h3>
+                    <canvas id="chart-papers-tags"></canvas>
+                </div>
+            </div>
+            <div class="chart-card" style="margin-top:24px;">
+                <h3 class="chart-title">各论文阅读时长</h3>
+                <div id="per-paper-stats"></div>
             </div>
         </div>
     </main>
@@ -101,6 +144,12 @@
     <div class="detail-overlay" id="detail-overlay">
         <div class="detail-bg" id="detail-bg"></div>
         <div class="detail-content" id="detail-content"></div>
+    </div>
+
+    <!-- 论文详情弹层 -->
+    <div class="detail-overlay" id="paper-detail-overlay">
+        <div class="detail-bg" id="paper-detail-bg"></div>
+        <div class="detail-content" id="paper-detail-content"></div>
     </div>
 
     <!-- PDF 阅读器全屏 -->
@@ -124,6 +173,12 @@
                 </button>
             </div>
             <div class="reader-toolbar-right">
+                <button class="btn paper-only-btn hidden" id="btn-quick-view" title="速览">
+                    <i data-lucide="zap"></i> 速览
+                </button>
+                <button class="btn paper-only-btn hidden" id="btn-highlight" title="高亮标注">
+                    <i data-lucide="highlighter"></i>
+                </button>
                 <button class="btn" id="btn-prev-page">
                     <i data-lucide="chevron-left"></i>
                 </button>
@@ -146,51 +201,90 @@
         <div class="progress-bar" id="reader-progress-bar">
             <div class="progress-fill" id="reader-progress-fill"></div>
         </div>
+        <!-- 高亮模式提示 -->
+        <div class="highlight-hint hidden" id="highlight-hint">
+            <span>高亮模式：拖拽绘制荧光标注</span>
+            <label class="hl-brush-label">笔刷大小
+                <input type="range" id="hl-brush-size" min="4" max="30" value="12" class="hl-brush-slider">
+            </label>
+            <button class="btn btn-sm" id="btn-undo-hl"><i data-lucide="undo-2"></i> 撤销</button>
+            <button class="btn btn-sm" id="btn-clear-hl"><i data-lucide="trash-2"></i> 清除</button>
+            <button class="btn btn-sm" id="btn-exit-highlight">退出高亮</button>
+        </div>
         <div class="reader-main">
             <div class="reader-body" id="reader-body"></div>
-            <div class="notes-panel collapsed" id="notes-panel">
-                <div class="notes-panel-resize" id="notes-panel-resize"></div>
-                <div class="notes-panel-header">
-                    <span>笔记</span>
-                    <button class="btn-icon" id="btn-close-notes-panel" title="收起">
-                        <i data-lucide="panel-right-close"></i>
-                    </button>
-                </div>
-                <div class="notes-tabs">
-                    <button class="notes-tab active" data-notes-tab="write">编写</button>
-                    <button class="notes-tab" data-notes-tab="preview">预览</button>
-                    <button class="notes-tab" data-notes-tab="draw">手写</button>
-                </div>
-                <div class="notes-content">
+        </div>
+        <!-- 浮动笔记面板 -->
+        <div class="notes-panel collapsed" id="notes-panel">
+            <div class="notes-panel-header" id="notes-panel-header">
+                <span>笔记</span>
+                <button class="btn-icon" id="btn-close-notes-panel" title="收起">
+                    <i data-lucide="panel-right-close"></i>
+                </button>
+            </div>
+            <div class="notes-tabs">
+                <button class="notes-tab active" data-notes-tab="edit">编辑</button>
+                <button class="notes-tab" data-notes-tab="draw">手写</button>
+            </div>
+            <div class="notes-content">
+                <div id="notes-edit-wrap" class="notes-edit-split">
                     <textarea id="notes-textarea" class="notes-textarea" placeholder="支持 Markdown 语法..."></textarea>
-                    <div id="notes-preview" class="notes-preview hidden"></div>
-                    <div id="notes-draw-wrap" class="notes-draw hidden">
-                        <canvas id="draw-canvas"></canvas>
-                        <div class="draw-actions">
-                            <button class="btn btn-sm" id="btn-undo-draw">
-                                <i data-lucide="undo-2"></i> 撤销
-                            </button>
-                            <button class="btn btn-sm" id="btn-clear-draw">
-                                <i data-lucide="trash-2"></i> 清除
-                            </button>
-                        </div>
+                    <div class="notes-edit-divider"></div>
+                    <div id="notes-preview" class="notes-preview"></div>
+                </div>
+                <div id="notes-draw-wrap" class="notes-draw hidden">
+                    <canvas id="draw-canvas"></canvas>
+                    <div class="draw-actions">
+                        <button class="btn btn-sm" id="btn-undo-draw">
+                            <i data-lucide="undo-2"></i> 撤销
+                        </button>
+                        <button class="btn btn-sm" id="btn-clear-draw">
+                            <i data-lucide="trash-2"></i> 清除
+                        </button>
                     </div>
+                </div>
+            </div>
+            <div class="notes-panel-resize" id="notes-panel-resize"></div>
+        </div>
+    </div>
+
+    <!-- 速览弹层 -->
+    <div class="quickview-overlay" id="quickview-overlay">
+        <div class="quickview-backdrop" id="quickview-backdrop"></div>
+        <div class="quickview-card">
+            <div class="quickview-header">
+                <h3><i data-lucide="zap"></i> 论文速览</h3>
+                <button class="btn-icon" id="btn-close-quickview"><i data-lucide="x"></i></button>
+            </div>
+            <div class="quickview-body">
+                <div class="quickview-section">
+                    <div class="quickview-label"><i data-lucide="align-left"></i> Abstract</div>
+                    <div id="qv-abstract" class="quickview-text"></div>
+                </div>
+                <div class="quickview-section">
+                    <div class="quickview-label"><i data-lucide="image"></i> Figures</div>
+                    <div id="qv-figures" class="quickview-text"></div>
+                </div>
+                <div class="quickview-section">
+                    <div class="quickview-label"><i data-lucide="flag"></i> Conclusion</div>
+                    <div id="qv-conclusion" class="quickview-text"></div>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 今日推荐弹窗 -->
-    <div class="recommend-overlay" id="recommend-overlay">
-        <div class="recommend-backdrop" id="recommend-backdrop"></div>
-        <div class="recommend-card">
-            <div class="recommend-inner">
-                <div class="recommend-label">今日推荐</div>
-                <div class="recommend-cover" id="recommend-cover"></div>
-                <h3 class="recommend-book-title" id="recommend-title"></h3>
-                <p class="recommend-quote" id="recommend-quote"></p>
+    <!-- 搜索弹窗 -->
+    <div class="search-overlay" id="search-overlay">
+        <div class="search-backdrop" id="search-backdrop"></div>
+        <div class="search-card">
+            <div class="search-input-wrap">
+                <i data-lucide="search"></i>
+                <input type="text" id="search-input" placeholder="搜索书名..." autocomplete="off">
+                <button class="btn-icon" id="btn-close-search" title="关闭">
+                    <i data-lucide="x"></i>
+                </button>
             </div>
-            <button class="btn btn-primary recommend-close-btn" id="btn-close-recommend">知道了</button>
+            <div id="search-results" class="search-results"></div>
         </div>
     </div>
 
@@ -215,9 +309,9 @@
         </div>
     </div>
 
-    <!-- 悬浮推荐按钮 -->
-    <button class="fab" id="fab-recommend" title="今日推荐">
-        <i data-lucide="sparkles"></i>
+    <!-- 悬浮搜索按钮 -->
+    <button class="fab fab-search" id="fab-search" title="搜索书籍">
+        <i data-lucide="search"></i>
     </button>
 
     <!-- 导入进度提示 -->
