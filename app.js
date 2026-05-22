@@ -1,5 +1,5 @@
 /* ============================================================
-   Lumina Library — 主逻辑
+   yread Lib — 主逻辑
    ============================================================ */
 
 // ---- 检测存储驱动 ----
@@ -52,6 +52,18 @@ let currentZoom = 1.5;
 let readStartTime = null;
 let readMode = 'single';  // single | double | scroll
 let scrollObserver = null; // IntersectionObserver for scroll mode
+
+// 目录侧边栏状态
+let tocOutline = null;       // 缓存的outline结构 [{title, pageNum, items:[]}]
+let tocOpen = false;
+
+// PDF搜索状态
+let pdfSearchOpen = false;
+let pageTextCache = {};      // {pageNum: [{str, transform}]}
+let searchMatches = [];      // [{pageNum, itemIndex, startIdx, endIdx}]
+let searchCurrentIdx = -1;
+let searchQuery = '';
+let searchDebounceTimer = null;
 
 // 笔记面板状态
 let signaturePad = null;
@@ -953,6 +965,7 @@ async function startPaperReading(paperId, autoQuickView) {
 
         updateModeButtons();
         await renderByMode();
+        loadOutline();
 
         if (autoQuickView) openQuickView();
     } catch (e) {
@@ -1344,6 +1357,7 @@ async function startReading(bookId) {
         // 同步模式按钮状态
         updateModeButtons();
         await renderByMode();
+        loadOutline();
     } catch (e) {
         document.getElementById('reader-body').innerHTML = `
             <div class="loading-center" style="flex-direction:column;gap:12px;">
@@ -1609,6 +1623,8 @@ function updatePageUI() {
     document.getElementById('page-indicator').textContent = `${currentPage} / ${totalPages}`;
     document.getElementById('zoom-indicator').textContent = `${Math.round(currentZoom / 1.5 * 100)}%`;
     document.getElementById('reader-progress-fill').style.width = `${(currentPage / totalPages) * 100}%`;
+    updateTocHighlight();
+    if (pdfSearchOpen && searchMatches.length > 0) renderSearchHighlights();
 }
 
 // ---- 单页模式 ----
@@ -1844,6 +1860,15 @@ async function closeReader() {
     document.getElementById('notes-panel').style.top = '';
     document.querySelectorAll('.paper-only-btn').forEach(b => b.classList.add('hidden'));
     document.getElementById('highlight-hint').classList.add('hidden');
+
+    // 清理目录和搜索状态
+    tocOpen = false;
+    document.getElementById('toc-sidebar').classList.add('collapsed');
+    closePdfSearch();
+    pageTextCache = {};
+    searchMatches = [];
+    searchCurrentIdx = -1;
+    tocOutline = null;
 
     pdfDoc = null;
     currentBookId = null;
@@ -2577,8 +2602,361 @@ renderByMode = async function() {
 };
 
 // ============================================================
-//  事件绑定
+//  章节目录侧边栏
 // ============================================================
+async function loadOutline() {
+    tocOutline = null;
+    if (!pdfDoc) return;
+    try {
+        const outline = await pdfDoc.getOutline();
+        if (!outline || outline.length === 0) {
+            document.getElementById('toc-body').innerHTML = '<div class="toc-empty">此PDF无章节目录</div>';
+            return;
+        }
+        tocOutline = await parseOutlineItems(outline);
+        renderToc();
+    } catch (e) {
+        console.warn('[Lumina] 目录提取失败:', e);
+        document.getElementById('toc-body').innerHTML = '<div class="toc-empty">目录提取失败</div>';
+    }
+}
+
+async function parseOutlineItems(items) {
+    const result = [];
+    for (const item of items) {
+        let pageNum = null;
+        if (item.dest) {
+            pageNum = await resolveDestPage(item.dest);
+        }
+        const entry = { title: item.title || '未命名', pageNum: pageNum };
+        if (item.items && item.items.length > 0) {
+            entry.items = await parseOutlineItems(item.items);
+        }
+        result.push(entry);
+    }
+    return result;
+}
+
+async function resolveDestPage(dest) {
+    try {
+        let explicitDest = dest;
+        if (typeof dest === 'string') {
+            explicitDest = await pdfDoc.getDestination(dest);
+        }
+        if (explicitDest && explicitDest.length > 0) {
+            const pageRef = explicitDest[0];
+            const pageIndex = await pdfDoc.getPageIndex(pageRef);
+            return pageIndex + 1; // 1-indexed
+        }
+    } catch (e) {
+        console.warn('[Lumina] 解析目录目标失败:', e);
+    }
+    return null;
+}
+
+function renderToc() {
+    const container = document.getElementById('toc-body');
+    if (!tocOutline || tocOutline.length === 0) {
+        container.innerHTML = '<div class="toc-empty">此PDF无章节目录</div>';
+        return;
+    }
+    container.innerHTML = '';
+    container.appendChild(buildTocDom(tocOutline, 0));
+    updateTocHighlight();
+}
+
+function buildTocDom(items, depth) {
+    const frag = document.createDocumentFragment();
+    items.forEach((item, idx) => {
+        const hasChildren = item.items && item.items.length > 0;
+        const row = document.createElement('div');
+        row.className = 'toc-item';
+        row.dataset.page = item.pageNum || '';
+        row.dataset.depth = depth;
+        row.style.paddingLeft = (14 + depth * 12) + 'px';
+
+        // 折叠箭头
+        const toggle = document.createElement('span');
+        toggle.className = 'toc-item-toggle' + (hasChildren ? '' : ' empty');
+        toggle.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"></polyline></svg>';
+        row.appendChild(toggle);
+
+        // 标题
+        const label = document.createElement('span');
+        label.className = 'toc-item-label';
+        label.textContent = item.title;
+        row.appendChild(label);
+
+        // 页码
+        if (item.pageNum) {
+            const page = document.createElement('span');
+            page.className = 'toc-item-page';
+            page.textContent = item.pageNum;
+            row.appendChild(page);
+        }
+
+        // 点击跳转
+        row.addEventListener('click', (e) => {
+            if (e.target.closest('.toc-item-toggle') && hasChildren) {
+                e.stopPropagation();
+                toggle.classList.toggle('expanded');
+                const childrenEl = row.nextElementSibling;
+                if (childrenEl && childrenEl.classList.contains('toc-children')) {
+                    childrenEl.classList.toggle('collapsed');
+                }
+                return;
+            }
+            if (item.pageNum) goToPage(item.pageNum);
+        });
+
+        frag.appendChild(row);
+
+        // 子条目
+        if (hasChildren) {
+            const childContainer = document.createElement('div');
+            childContainer.className = 'toc-children collapsed';
+            childContainer.appendChild(buildTocDom(item.items, depth + 1));
+            frag.appendChild(childContainer);
+        }
+    });
+    return frag;
+}
+
+function updateTocHighlight() {
+    const items = document.querySelectorAll('#toc-body .toc-item');
+    items.forEach(el => {
+        const p = parseInt(el.dataset.page);
+        el.classList.toggle('active', p === currentPage);
+    });
+}
+
+function toggleToc() {
+    tocOpen = !tocOpen;
+    document.getElementById('toc-sidebar').classList.toggle('collapsed', !tocOpen);
+}
+
+function goToPage(pageNum) {
+    if (!pdfDoc || pageNum < 1 || pageNum > totalPages) return;
+    if (readMode === 'scroll') {
+        currentPage = pageNum;
+        const target = document.getElementById('scroll-page-' + pageNum);
+        if (target) target.scrollIntoView({ behavior: 'instant', block: 'start' });
+        updatePageUI();
+        updateTocHighlight();
+    } else {
+        currentPage = pageNum;
+        if (readMode === 'double') currentPage = Math.ceil(currentPage / 2) * 2 - 1;
+        renderByMode();
+        updateTocHighlight();
+    }
+}
+
+// ============================================================
+//  PDF 全文搜索
+// ============================================================
+function togglePdfSearch() {
+    pdfSearchOpen = !pdfSearchOpen;
+    document.getElementById('pdf-search-bar').classList.toggle('collapsed', !pdfSearchOpen);
+    if (pdfSearchOpen) {
+        setTimeout(() => document.getElementById('pdf-search-input').focus(), 100);
+    } else {
+        clearSearchHighlights();
+    }
+}
+
+function closePdfSearch() {
+    pdfSearchOpen = false;
+    document.getElementById('pdf-search-bar').classList.add('collapsed');
+    clearSearchHighlights();
+}
+
+async function performPdfSearch(query) {
+    searchQuery = query;
+    searchMatches = [];
+    searchCurrentIdx = -1;
+    if (!query || !pdfDoc) {
+        updateSearchUI();
+        clearSearchHighlights();
+        return;
+    }
+
+    const statusEl = document.getElementById('pdf-search-status');
+    statusEl.textContent = '搜索中...';
+
+    const lowerQuery = query.toLowerCase();
+
+    for (let p = 1; p <= totalPages; p++) {
+        const textItems = await getPageTextItems(p);
+        if (!textItems || textItems.length === 0) continue;
+        for (let i = 0; i < textItems.length; i++) {
+            const item = textItems[i];
+            if (!item.str) continue;
+            const lowerStr = item.str.toLowerCase();
+            let startIdx = 0;
+            while (true) {
+                const found = lowerStr.indexOf(lowerQuery, startIdx);
+                if (found === -1) break;
+                searchMatches.push({ pageNum: p, itemIndex: i, startIdx: found, endIdx: found + query.length, item: item });
+                startIdx = found + 1;
+            }
+        }
+    }
+
+    if (searchMatches.length > 0) {
+        searchCurrentIdx = 0;
+        statusEl.textContent = `找到 ${searchMatches.length} 处匹配`;
+        navigateToMatch(0);
+    } else {
+        statusEl.textContent = '未找到匹配项';
+    }
+    updateSearchUI();
+}
+
+async function getPageTextItems(pageNum) {
+    if (pageTextCache[pageNum]) return pageTextCache[pageNum];
+    if (!pdfDoc) { console.warn('[Lumina] getPageTextItems: pdfDoc 为空'); return null; }
+    try {
+        const page = await pdfDoc.getPage(pageNum);
+        const textContent = await page.getTextContent();
+        const items = textContent.items.map(item => ({
+            str: item.str,
+            transform: item.transform,
+            width: item.width,
+            height: item.height || item.transform[0]
+        }));
+        pageTextCache[pageNum] = items;
+        return items;
+    } catch (e) {
+        console.warn('[Lumina] 提取第', pageNum, '页文本失败:', e);
+        return null;
+    }
+}
+
+function navigateToMatch(idx) {
+    if (idx < 0 || idx >= searchMatches.length) return;
+    searchCurrentIdx = idx;
+    const match = searchMatches[idx];
+    goToPage(match.pageNum);
+    updateSearchUI();
+    renderSearchHighlights();
+}
+
+function searchNext() {
+    if (searchMatches.length === 0) return;
+    navigateToMatch((searchCurrentIdx + 1) % searchMatches.length);
+}
+
+function searchPrev() {
+    if (searchMatches.length === 0) return;
+    navigateToMatch((searchCurrentIdx - 1 + searchMatches.length) % searchMatches.length);
+}
+
+function updateSearchUI() {
+    const countEl = document.getElementById('pdf-search-count');
+    if (searchMatches.length === 0) {
+        countEl.textContent = searchQuery ? '无匹配' : '';
+    } else {
+        countEl.textContent = `${searchCurrentIdx + 1} / ${searchMatches.length}`;
+    }
+}
+
+async function renderSearchHighlights() {
+    clearSearchHighlights();
+    if (searchMatches.length === 0 || !pdfDoc) return;
+
+    // 获取当前页所有匹配
+    const currentMatches = searchMatches.filter(m => m.pageNum === currentPage);
+    if (currentMatches.length === 0) return;
+
+    try {
+        // 找到当前页对应的canvas
+        let canvas;
+        if (readMode === 'scroll') {
+            canvas = document.getElementById('scroll-page-' + currentPage);
+        } else {
+            canvas = document.getElementById('pdf-canvas');
+        }
+        if (!canvas || !canvas.width || !canvas.height) return;
+
+        // 获取或创建高亮覆盖层canvas
+        const hlCanvas = getOrCreateSearchHlCanvas(canvas);
+        const ctx = hlCanvas.getContext('2d');
+        ctx.clearRect(0, 0, hlCanvas.width, hlCanvas.height);
+
+        for (const match of currentMatches) {
+            const item = match.item;
+            const t = item.transform;
+
+            const scaledX = t[4] * currentZoom;
+            const scaledY = t[5] * currentZoom;
+
+            const charW = (item.width / Math.max(item.str.length, 1)) * currentZoom;
+            const hlX = scaledX + match.startIdx * charW;
+            const hlW = Math.max((match.endIdx - match.startIdx) * charW, 4);
+            const fontSize = Math.abs(t[3]) * currentZoom;
+            const hlH = fontSize * 1.3;
+
+            const hlY = canvas.height - scaledY - hlH * 0.85;
+
+            const isCurrent = match === searchMatches[searchCurrentIdx];
+            ctx.fillStyle = isCurrent
+                ? 'rgba(250, 204, 21, 0.55)'
+                : 'rgba(250, 204, 21, 0.3)';
+            ctx.fillRect(hlX, hlY, hlW, hlH);
+
+            if (isCurrent) {
+                ctx.strokeStyle = 'rgba(250, 204, 21, 0.8)';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(hlX, hlY, hlW, hlH);
+            }
+        }
+    } catch (e) {
+        console.warn('[Lumina] 渲染搜索高亮失败:', e);
+    }
+}
+
+/** 获取或创建搜索高亮覆盖层canvas（嵌入在 canvas 的 wrap 容器内） */
+function getOrCreateSearchHlCanvas(canvas) {
+    let wrap = canvas.parentElement;
+    // 如果canvas没有被wrap，创建一个
+    if (!wrap.classList.contains('hl-canvas-wrap')) {
+        wrap = document.createElement('div');
+        wrap.className = 'hl-canvas-wrap';
+        canvas.parentNode.insertBefore(wrap, canvas);
+        wrap.appendChild(canvas);
+    }
+    // 查找已有的搜索高亮canvas
+    let hl = wrap.querySelector('.search-hl-overlay');
+    if (!hl) {
+        hl = document.createElement('canvas');
+        hl.className = 'search-hl-overlay';
+        hl.width = canvas.width;
+        hl.height = canvas.height;
+        hl.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:5;';
+        wrap.appendChild(hl);
+    }
+    // 同步尺寸
+    if (hl.width !== canvas.width || hl.height !== canvas.height) {
+        hl.width = canvas.width;
+        hl.height = canvas.height;
+    }
+    return hl;
+}
+
+/** 清除所有搜索高亮覆盖层 */
+function clearSearchHighlights() {
+    document.querySelectorAll('.search-hl-overlay').forEach(c => {
+        const ctx = c.getContext('2d');
+        ctx.clearRect(0, 0, c.width, c.height);
+    });
+}
+
+function handlePdfSearchInput(e) {
+    clearTimeout(searchDebounceTimer);
+    const query = e.target.value;
+    searchDebounceTimer = setTimeout(() => performPdfSearch(query), 300);
+}
+
 function bindEvents() {
     // 主题切换
     document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
@@ -2623,6 +3001,21 @@ function bindEvents() {
     document.getElementById('btn-zoom-in').addEventListener('click', zoomIn);
     document.getElementById('btn-zoom-out').addEventListener('click', zoomOut);
 
+    // 目录侧边栏
+    document.getElementById('btn-toggle-toc').addEventListener('click', toggleToc);
+    document.getElementById('btn-close-toc').addEventListener('click', toggleToc);
+
+    // PDF全文搜索
+    document.getElementById('btn-toggle-search-bar').addEventListener('click', togglePdfSearch);
+    document.getElementById('btn-close-pdf-search').addEventListener('click', closePdfSearch);
+    document.getElementById('btn-search-prev').addEventListener('click', searchPrev);
+    document.getElementById('btn-search-next').addEventListener('click', searchNext);
+    document.getElementById('pdf-search-input').addEventListener('input', handlePdfSearchInput);
+    document.getElementById('pdf-search-input').addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { e.shiftKey ? searchPrev() : searchNext(); }
+        if (e.key === 'Escape') closePdfSearch();
+    });
+
     // 论文专用按钮
     document.getElementById('btn-quick-view').addEventListener('click', openQuickView);
     document.getElementById('btn-highlight').addEventListener('click', toggleHighlightMode);
@@ -2665,10 +3058,18 @@ function bindEvents() {
             return;
         }
         if (!document.getElementById('reader-overlay').classList.contains('open')) return;
+        // Ctrl+F 打开PDF搜索
+        if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+            e.preventDefault();
+            if (!pdfSearchOpen) togglePdfSearch();
+            else document.getElementById('pdf-search-input').focus();
+            return;
+        }
         switch (e.key) {
             case 'PageUp': prevPage(); break;
             case 'PageDown': nextPage(); break;
             case 'Escape':
+                if (pdfSearchOpen) { closePdfSearch(); break; }
                 if (highlightMode) exitHighlightMode();
                 else closeReader();
                 break;

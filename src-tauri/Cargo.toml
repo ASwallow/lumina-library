@@ -1,5 +1,5 @@
 [package]
-name = "lumina-library"
+name = "yread-lib"
 version = "1.0.0"
 edition = "2021"
 

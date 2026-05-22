@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lumina Library</title>
+    <title>yread Lib</title>
     <!-- 本地依赖 -->
     <script src="lib/tailwind.js"></script>
     <script>
@@ -29,7 +29,7 @@
             <div class="nav-logo">
                 <i data-lucide="book-open"></i>
             </div>
-            <span class="nav-title">Lumina Library</span>
+            <span class="nav-title">yread Lib</span>
         </div>
         <div class="nav-center">
             <button class="nav-item active" data-tab="shelf">
@@ -159,6 +159,9 @@
                 <button class="btn" id="btn-close-reader">
                     <i data-lucide="arrow-left"></i> 返回
                 </button>
+                <button class="btn" id="btn-toggle-toc" title="章节目录">
+                    <i data-lucide="list"></i>
+                </button>
                 <span class="reader-title" id="reader-title"></span>
             </div>
             <div class="reader-mode-selector">
@@ -193,6 +196,9 @@
                 <button class="btn" id="btn-zoom-in">
                     <i data-lucide="plus"></i>
                 </button>
+                <button class="btn" id="btn-toggle-search-bar" title="搜索 (Ctrl+F)">
+                    <i data-lucide="search"></i>
+                </button>
                 <button class="btn" id="btn-toggle-notes-panel" title="笔记">
                     <i data-lucide="sticky-note"></i>
                 </button>
@@ -200,6 +206,24 @@
         </div>
         <div class="progress-bar" id="reader-progress-bar">
             <div class="progress-fill" id="reader-progress-fill"></div>
+        </div>
+        <!-- 搜索栏 -->
+        <div class="pdf-search-bar collapsed" id="pdf-search-bar">
+            <div class="pdf-search-input-wrap">
+                <i data-lucide="search"></i>
+                <input type="text" id="pdf-search-input" placeholder="搜索PDF内容..." autocomplete="off">
+                <span class="pdf-search-count" id="pdf-search-count"></span>
+                <button class="btn-icon" id="btn-search-prev" title="上一个">
+                    <i data-lucide="chevron-up"></i>
+                </button>
+                <button class="btn-icon" id="btn-search-next" title="下一个">
+                    <i data-lucide="chevron-down"></i>
+                </button>
+                <button class="btn-icon" id="btn-close-pdf-search" title="关闭">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+            <div class="pdf-search-status" id="pdf-search-status"></div>
         </div>
         <!-- 高亮模式提示 -->
         <div class="highlight-hint hidden" id="highlight-hint">
@@ -212,6 +236,18 @@
             <button class="btn btn-sm" id="btn-exit-highlight">退出高亮</button>
         </div>
         <div class="reader-main">
+            <!-- 章节目录侧边栏 -->
+            <div class="toc-sidebar collapsed" id="toc-sidebar">
+                <div class="toc-header">
+                    <span>章节目录</span>
+                    <button class="btn-icon" id="btn-close-toc" title="收起">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+                <div class="toc-body" id="toc-body">
+                    <div class="toc-empty">加载中...</div>
+                </div>
+            </div>
             <div class="reader-body" id="reader-body"></div>
         </div>
         <!-- 浮动笔记面板 -->
