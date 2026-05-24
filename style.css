@@ -1342,3 +1342,111 @@ body.light-theme .fab:hover { background: rgba(0,0,0,0.1); }
 }
 
 /* 搜索高亮直接绘制在 canvas 上，无需额外 CSS */
+
+/* ============================================================
+   阅读热力图
+   ============================================================ */
+.heatmap-wrap {
+    overflow-x: auto;
+    overflow-y: visible;
+    padding: 8px 0;
+    margin: 0 -8px;
+    padding-left: 8px;
+    padding-right: 8px;
+}
+.heatmap-wrap canvas {
+    display: block;
+    margin: 0 auto;
+}
+.heatmap-tooltip {
+    display: none;
+    position: absolute;
+    transform: translate(-50%, -100%);
+    background: var(--bg-modal);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 20;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+    transition: left 0.08s, top 0.08s;
+}
+.heatmap-tooltip.below {
+    transform: translate(-50%, 0);
+}
+
+/* ============================================================
+   笔记导出按钮
+   ============================================================ */
+.notes-export-bar {
+    display: flex;
+    gap: 6px;
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+}
+
+/* ============================================================
+   彭罗斯镶嵌底纹
+   ============================================================ */
+:root {
+    --penrose-opacity: 0.07;
+}
+.penrose-bg {
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    opacity: var(--penrose-opacity);
+    overflow: hidden;
+}
+
+/* ============================================================
+   设置页
+   ============================================================ */
+.settings-wrap {
+    max-width: 600px;
+    margin: 40px auto;
+    padding: 0 24px;
+}
+.settings-section {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+    backdrop-filter: blur(12px);
+}
+.settings-section h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-primary);
+}
+.settings-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 0;
+}
+.settings-row label {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+.settings-row input[type="range"] {
+    width: 160px;
+    accent-color: #6366f1;
+}
+.settings-row .settings-value {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    min-width: 36px;
+    text-align: right;
+}

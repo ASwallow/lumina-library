@@ -1700,14 +1700,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
-name = "lumina-library"
-version = "1.0.0"
-dependencies = [
- "tauri",
- "tauri-build",
-]
-
-[[package]]
 name = "markup5ever"
 version = "0.38.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4504,6 +4496,14 @@ dependencies = [
  "quote",
  "syn 2.0.117",
  "synstructure",
+]
+
+[[package]]
+name = "yread-lib"
+version = "1.0.1"
+dependencies = [
+ "tauri",
+ "tauri-build",
 ]
 
 [[package]]

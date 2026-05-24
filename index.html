@@ -41,6 +41,9 @@
             <button class="nav-item" data-tab="dashboard">
                 <i data-lucide="bar-chart-3"></i> 统计
             </button>
+            <button class="nav-item" data-tab="settings">
+                <i data-lucide="settings"></i> 设置
+            </button>
         </div>
         <div class="nav-right">
             <button class="theme-toggle" id="theme-toggle" title="切换主题">
@@ -115,6 +118,13 @@
                 <h3 class="chart-title">各书阅读时长</h3>
                 <div id="per-book-stats"></div>
             </div>
+            <!-- 阅读热力图 -->
+            <div class="chart-card" style="margin-top:24px;">
+                <h3 class="chart-title">阅读热力图</h3>
+                <div class="heatmap-wrap" style="position:relative;">
+                    <canvas id="chart-heatmap"></canvas>
+                </div>
+            </div>
             <!-- 论文统计 -->
             <h3 class="section-subtitle"><i data-lucide="file-text"></i> 论文</h3>
             <div class="stat-cards stat-cards-sm">
@@ -136,6 +146,21 @@
             <div class="chart-card" style="margin-top:24px;">
                 <h3 class="chart-title">各论文阅读时长</h3>
                 <div id="per-paper-stats"></div>
+            </div>
+        </div>
+    </main>
+
+    <!-- 设置页 -->
+    <main id="page-settings" class="hidden">
+        <div class="settings-wrap">
+            <h2 class="section-title">设置</h2>
+            <div class="settings-section">
+                <h3><i data-lucide="palette"></i> 外观</h3>
+                <div class="settings-row">
+                    <label>彭罗斯底纹透明度</label>
+                    <input type="range" id="penrose-opacity-slider" min="0" max="20" step="1" value="7">
+                    <span class="settings-value" id="penrose-opacity-value">7%</span>
+                </div>
             </div>
         </div>
     </main>
@@ -279,6 +304,14 @@
                         </button>
                     </div>
                 </div>
+            </div>
+            <div class="notes-export-bar">
+                <button class="btn btn-sm" id="btn-export-notes-md" title="导出为 Markdown">
+                    <i data-lucide="file-down"></i> 导出 .md
+                </button>
+                <button class="btn btn-sm" id="btn-export-notes-pdf" title="导出手写笔记为 PDF">
+                    <i data-lucide="file-image"></i> 导出手写
+                </button>
             </div>
             <div class="notes-panel-resize" id="notes-panel-resize"></div>
         </div>

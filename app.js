@@ -142,6 +142,7 @@ function toggleTheme() {
     const next = isLight ? 'dark' : 'light';
     applyTheme(next);
     localforage.setItem('theme', next);
+    generatePenroseBackground();
 }
 
 /** 保存书库元数据 */
@@ -252,14 +253,23 @@ function switchTab(tab) {
     document.getElementById('page-shelf').classList.toggle('hidden', tab !== 'shelf');
     document.getElementById('page-papers').classList.toggle('hidden', tab !== 'papers');
     document.getElementById('page-dashboard').classList.toggle('hidden', tab !== 'dashboard');
-    // 更新导入按钮标签
-    document.getElementById('import-btn-label').textContent = tab === 'papers' ? '导入论文' : '批量导入';
+    document.getElementById('page-settings').classList.toggle('hidden', tab !== 'settings');
+    // 更新导入按钮标签和可见性
+    const importBtn = document.getElementById('import-btn');
+    if (tab === 'settings') {
+        importBtn.style.display = 'none';
+    } else {
+        importBtn.style.display = '';
+        document.getElementById('import-btn-label').textContent = tab === 'papers' ? '导入论文' : '批量导入';
+    }
     if (tab === 'papers') {
         renderPapersShelf();
     } else if (tab === 'dashboard') {
         try { renderDashboard(); } catch (e) {
             console.error('[Lumina] 统计渲染失败:', e);
         }
+    } else if (tab === 'settings') {
+        initSettings();
     }
 }
 
@@ -1521,6 +1531,122 @@ async function saveCurrentNotes() {
     else await saveLibrary();
 }
 
+// ---- 笔记导出（保存到 exe 所在目录的 notes/ 子文件夹） ----
+let _exeDir = null;
+async function getExeDir() {
+    if (_exeDir) return _exeDir;
+    try {
+        _exeDir = await window.__TAURI__.core.invoke('get_exe_dir');
+        return _exeDir;
+    } catch (e) {
+        console.warn('[Lumina] 获取 exe 目录失败:', e);
+        return null;
+    }
+}
+
+function getCurrentNoteItem() {
+    return isPaperReader
+        ? papers.find(p => p.id === currentBookId)
+        : library.find(b => b.id === currentBookId);
+}
+
+function sanitizeFilename(name) {
+    return (name || '未命名').replace(/[\\/:*?"<>|]/g, '_').substring(0, 80);
+}
+
+function dataUrlToBytes(dataUrl) {
+    const base64 = dataUrl.split(',')[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+}
+
+/** 将透明底的 dataUrl 图片合成到白底上，返回 PNG Uint8Array */
+function dataUrlToWhiteBgBytes(dataUrl) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            const cvs = document.createElement('canvas');
+            cvs.width = img.width;
+            cvs.height = img.height;
+            const ctx = cvs.getContext('2d');
+            ctx.fillStyle = '#fff';
+            ctx.fillRect(0, 0, cvs.width, cvs.height);
+            ctx.drawImage(img, 0, 0);
+            cvs.toBlob((blob) => {
+                blob.arrayBuffer().then(buf => resolve(new Uint8Array(buf)));
+            }, 'image/png');
+        };
+        img.onerror = () => resolve(dataUrlToBytes(dataUrl)); // fallback
+        img.src = dataUrl;
+    });
+}
+
+async function saveFileViaTauri(path, contents) {
+    try {
+        await window.__TAURI__.core.invoke('save_file', { path, contents: Array.from(contents) });
+        return true;
+    } catch (e) {
+        console.error('[Lumina] 保存文件失败:', e);
+        showToast('保存失败: ' + e);
+        return false;
+    }
+}
+
+async function exportNotesAsMd() {
+    const item = getCurrentNoteItem();
+    if (!item) { showToast('请先打开一本书'); return; }
+
+    const hasText = item.notes && item.notes.text && item.notes.text.trim();
+    const hasDrawing = item.notes && item.notes.drawing;
+
+    if (!hasText && !hasDrawing) {
+        showToast('暂无笔记内容');
+        return;
+    }
+
+    const exeDir = await getExeDir();
+    if (!exeDir) { showToast('无法获取应用目录'); return; }
+
+    const safeName = sanitizeFilename(item.name);
+    const dir = exeDir + '\\notes\\' + safeName;
+
+    // 如果有手写，先把图片单独存为 PNG（白底），md 里用相对路径引用
+    let mdContent = `# ${item.name}\n\n`;
+    if (hasText) mdContent += item.notes.text + '\n';
+    if (hasDrawing) {
+        const imgBytes = await dataUrlToWhiteBgBytes(item.notes.drawing);
+        const imgPath = dir + '\\drawing.png';
+        const saved = await saveFileViaTauri(imgPath, imgBytes);
+        if (saved) {
+            mdContent += '\n\n## 手写笔记\n\n![手写笔记](drawing.png)\n';
+        }
+    }
+
+    const mdPath = dir + '\\' + safeName + '.md';
+    const encoder = new TextEncoder();
+    const ok = await saveFileViaTauri(mdPath, encoder.encode(mdContent));
+    if (ok) showToast('已导出到 notes\\' + safeName);
+}
+
+async function exportNotesDrawing() {
+    const item = getCurrentNoteItem();
+    if (!item || !item.notes || !item.notes.drawing) {
+        showToast('暂无手写笔记');
+        return;
+    }
+
+    const exeDir = await getExeDir();
+    if (!exeDir) { showToast('无法获取应用目录'); return; }
+
+    const safeName = sanitizeFilename(item.name);
+    const imgBytes = await dataUrlToWhiteBgBytes(item.notes.drawing);
+    const imgPath = exeDir + '\\notes\\' + safeName + '\\drawing.png';
+    const ok = await saveFileViaTauri(imgPath, imgBytes);
+    if (ok) showToast('已导出到 notes\\' + safeName + '\\drawing.png');
+}
+
 function initNotesPanelResize() {
     const handle = document.getElementById('notes-panel-resize');
     const panel = document.getElementById('notes-panel');
@@ -1891,12 +2017,15 @@ function recordReadingStat() {
     if (!readStartTime || !currentBookId) return;
     // Math.ceil：即使只读了 30 秒也记为 1 分钟，不丢数据
     const duration = Math.max(1, Math.ceil((Date.now() - readStartTime) / 60000));
+    const now = new Date();
     readingStats.push({
         bookId: currentBookId,
-        date: new Date().toISOString().slice(0, 10),
+        date: now.toISOString().slice(0, 10),
         duration,
         page: currentPage,
-        isPaper: isPaperReader || false
+        isPaper: isPaperReader || false,
+        hour: now.getHours(),
+        timestamp: now.getTime()
     });
     // 同步保存（不 await，供 beforeunload 使用）
     localforage.setItem('readingStats', readingStats);
@@ -2084,74 +2213,215 @@ function generateArtCover() {
     const canvas = document.getElementById('cover-canvas');
     const ctx = canvas.getContext('2d');
     const W = 300, H = 440;
-    const style = Math.random() > 0.5 ? 0 : 1;
+
+    // 以书名为种子的确定性 PRNG（mulberry32）
+    function seedHash(str) {
+        let h = 0;
+        for (let i = 0; i < str.length; i++) {
+            h = ((h << 5) - h + str.charCodeAt(i)) | 0;
+        }
+        return h >>> 0;
+    }
+    const _seed = seedHash(book.name || 'untitled');
+    let _s = _seed || 1;
+    function srand() {
+        _s |= 0; _s = _s + 0x6D2B79F5 | 0;
+        let t = Math.imul(_s ^ _s >>> 15, 1 | _s);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    }
+    function srandRange(a, b) { return a + srand() * (b - a); }
+    function srandInt(a, b) { return Math.floor(srandRange(a, b + 1)); }
+
+    const style = srand() > 0.5 ? 0 : 1; // 0=纽结投影, 1=点阵迭代
+
+    ctx.fillStyle = '#f8f6f0';
+    ctx.fillRect(0, 0, W, H);
 
     if (style === 0) {
-        // ---- 蒙德里安风格 ----
-        ctx.fillStyle = '#f5f0e8';
-        ctx.fillRect(0, 0, W, H);
+        // ---- 三叶结 / 八字结 / 环面纽结的平面投影 ----
+        const knotType = srandInt(0, 2); // 0=trefoil, 1=figure-eight, 2=torus(2,3)
 
-        const colors = ['#c0392b', '#2980b9', '#f1c40f', '#2c3e50', '#e67e22', '#1abc9c', '#8e44ad'];
-        const lineW = 3 + Math.random() * 3;
-        ctx.strokeStyle = '#1a1a1a';
-        ctx.lineWidth = lineW;
-
-        const hLines = [], vLines = [];
-        for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) {
-            const y = 40 + Math.random() * (H - 80);
-            hLines.push(y);
-            ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
-        }
-        for (let i = 0; i < 2 + Math.floor(Math.random() * 3); i++) {
-            const x = 30 + Math.random() * (W - 60);
-            vLines.push(x);
-            ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
-        }
-
-        // 随机填色
-        const bounds = [0, ...hLines.sort((a, b) => a - b), H];
-        const cols = [0, ...vLines.sort((a, b) => a - b), W];
-        for (let i = 0; i < bounds.length - 1; i++) {
-            for (let j = 0; j < cols.length - 1; j++) {
-                if (Math.random() > 0.35) {
-                    ctx.fillStyle = colors[Math.floor(Math.random() * colors.length)];
-                    ctx.fillRect(
-                        cols[j] + lineW, bounds[i] + lineW,
-                        cols[j + 1] - cols[j] - lineW * 2,
-                        bounds[i + 1] - bounds[i] - lineW * 2
-                    );
-                }
+        function knotPoint(t) {
+            let x, y;
+            if (knotType === 0) {
+                // 三叶结 (trefoil knot)
+                x = Math.sin(t) + 2 * Math.sin(2 * t);
+                y = Math.cos(t) - 2 * Math.cos(2 * t);
+            } else if (knotType === 1) {
+                // 八字结 (figure-eight knot)
+                x = (2 + Math.cos(2 * t)) * Math.cos(3 * t);
+                y = (2 + Math.cos(2 * t)) * Math.sin(3 * t);
+            } else {
+                // 环面纽结 Torus(2,3)
+                const p = 2, q = 3;
+                const r = 2 + Math.cos(q * t / p);
+                x = r * Math.cos(t);
+                y = r * Math.sin(t);
             }
+            return [x, y];
         }
-    } else {
-        // ---- 波普艺术风格 ----
-        const baseHue = Math.random() * 360;
-        ctx.fillStyle = `hsl(${baseHue}, 70%, 50%)`;
-        ctx.fillRect(0, 0, W, H);
 
-        for (let i = 0; i < 30; i++) {
-            const x = Math.random() * W;
-            const y = Math.random() * H;
-            const r = 10 + Math.random() * 50;
-            const hue = (Math.random() * 60 + baseHue) % 360;
+        // 参数 c 用书名种子迭代 50 次
+        let c = (_seed % 1000) / 1000;
+        for (let i = 0; i < 50; i++) {
+            c = 3.9 * c * (1 - c); // logistic map
+        }
+
+        const numStrands = srandInt(1, 3);
+        const lineStyles = ['solid', 'dashed', 'dotted'];
+        const strandStyle = lineStyles[srandInt(0, 2)];
+        const paletteChoice = srandInt(0, 2);
+
+        // 灰度或单色调色板
+        let baseColor;
+        if (paletteChoice === 0) {
+            baseColor = null; // 灰度模式
+        } else if (paletteChoice === 1) {
+            const hues = ['#3b82f6', '#6366f1', '#8b5cf6', '#0ea5e9', '#14b8a6'];
+            baseColor = hues[srandInt(0, hues.length - 1)];
+        } else {
+            const hues = ['#ef4444', '#f59e0b', '#10b981', '#ec4899', '#f97316'];
+            baseColor = hues[srandInt(0, hues.length - 1)];
+        }
+
+        const scale = 55 + c * 35;
+        const cx = W / 2, cy = H / 2 - 60;
+
+        for (let s = 0; s < numStrands; s++) {
+            const offset = s * 0.15;
+            const steps = 1200;
             ctx.beginPath();
-            ctx.arc(x, y, r, 0, Math.PI * 2);
-            ctx.fillStyle = `hsla(${hue}, 90%, 60%, 0.6)`;
-            ctx.fill();
-            ctx.strokeStyle = `hsla(${hue}, 90%, 30%, 0.8)`;
-            ctx.lineWidth = 2;
+            for (let i = 0; i <= steps; i++) {
+                const t = (i / steps) * Math.PI * 2 * 2 + offset;
+                const [kx, ky] = knotPoint(t + c * 0.5);
+                const px = cx + kx * scale;
+                const py = cy + ky * scale;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.closePath();
+
+            // 线型
+            if (strandStyle === 'dashed') ctx.setLineDash([12, 8]);
+            else if (strandStyle === 'dotted') ctx.setLineDash([3, 5]);
+            else ctx.setLineDash([]);
+
+            // 颜色
+            if (baseColor === null) {
+                const gray = 30 + s * 40;
+                ctx.strokeStyle = `rgb(${gray},${gray},${gray})`;
+            } else {
+                ctx.strokeStyle = baseColor;
+                ctx.globalAlpha = 1 - s * 0.2;
+            }
+            ctx.lineWidth = 4 - s * 0.8;
+            ctx.lineJoin = 'round';
+            ctx.lineCap = 'round';
             ctx.stroke();
+            ctx.globalAlpha = 1;
+            ctx.setLineDash([]);
         }
 
-        // 条纹叠加
-        if (Math.random() > 0.5) {
-            ctx.globalAlpha = 0.3;
-            for (let i = 0; i < H; i += 8) {
-                ctx.fillStyle = '#fff';
-                ctx.fillRect(0, i, W, 3);
-            }
-            ctx.globalAlpha = 1;
+        // 阴影点阵装饰
+        const dotCount = 40 + srandInt(0, 50);
+        for (let i = 0; i < dotCount; i++) {
+            const dx = srandRange(20, W - 20);
+            const dy = srandRange(20, H - 120);
+            const dr = srandRange(1.5, 4);
+            ctx.beginPath();
+            ctx.arc(dx, dy, dr, 0, Math.PI * 2);
+            ctx.fillStyle = baseColor === null
+                ? `rgba(0,0,0,${srandRange(0.05, 0.2)})`
+                : `${baseColor}${Math.floor(srandRange(20, 60)).toString(16).padStart(2, '0')}`;
+            ctx.fill();
         }
+
+    } else {
+        // ---- 点阵迭代（logistic map 可视化） ----
+        let c = (_seed % 1000) / 1000;
+        // 迭代 50 次确定参数 c
+        for (let i = 0; i < 50; i++) {
+            c = 3.9 * c * (1 - c);
+        }
+
+        const paletteChoice = srandInt(0, 2);
+        let dotColor, bgColor;
+        if (paletteChoice === 0) {
+            // 灰度
+            dotColor = '#2a2a2a';
+            bgColor = '#f8f6f0';
+        } else if (paletteChoice === 1) {
+            dotColor = '#312e81';
+            bgColor = '#f0f0ff';
+        } else {
+            dotColor = '#7c2d12';
+            bgColor = '#fff8f0';
+        }
+
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, W, H);
+
+        // logistic map 迭代点阵
+        const margin = 30;
+        const plotW = W - margin * 2;
+        const plotH = H - 160;
+        const plotTop = margin + 60; // 下移使曲线居中
+        const iterations = 200;
+        const discard = 50;
+        let x = srand();
+
+        ctx.fillStyle = dotColor;
+        for (let i = 0; i < iterations; i++) {
+            x = c * x * (1 - x);
+            if (i < discard) continue;
+            const px = margin + ((i - discard) / (iterations - discard)) * plotW;
+            const py = plotTop + (1 - x) * plotH;
+            const r = 2.5 + srand() * 2;
+            ctx.beginPath();
+            ctx.arc(px, py, r, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        // 连线版本（bifurcation hint）
+        x = srand();
+        ctx.beginPath();
+        ctx.strokeStyle = dotColor;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.4;
+        ctx.lineJoin = 'round';
+        for (let i = 0; i < iterations; i++) {
+            x = c * x * (1 - x);
+            const px = margin + (i / iterations) * plotW;
+            const py = plotTop + (1 - x) * plotH;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+
+        // 网格线
+        ctx.strokeStyle = dotColor;
+        ctx.globalAlpha = 0.08;
+        ctx.lineWidth = 0.5;
+        for (let gy = 0; gy < 6; gy++) {
+            const yy = plotTop + (gy / 5) * plotH;
+            ctx.beginPath(); ctx.moveTo(margin, yy); ctx.lineTo(W - margin, yy); ctx.stroke();
+        }
+        for (let gx = 0; gx < 10; gx++) {
+            const xx = margin + (gx / 9) * plotW;
+            ctx.beginPath(); ctx.moveTo(xx, plotTop); ctx.lineTo(xx, plotTop + plotH); ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+
+        // 参数标注
+        ctx.fillStyle = dotColor;
+        ctx.globalAlpha = 0.35;
+        ctx.font = '11px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText('c = ' + c.toFixed(6), margin, H - 85);
+        ctx.fillText('iterations: 50', margin, H - 70);
+        ctx.globalAlpha = 1;
     }
 
     // 书名标签
@@ -2278,6 +2548,10 @@ function renderDashboard() {
     paperStats.forEach(r => { paperTimes[r.bookId] = (paperTimes[r.bookId] || 0) + r.duration; });
     const sortedPapers = Object.entries(paperTimes).map(([id, min]) => ({ id, min, item: papers.find(p => p.id === id) })).filter(e => e.item).sort((a, b) => b.min - a.min);
     renderItemList('per-paper-stats', sortedPapers);
+
+    // ---- 热力图 ----
+    renderHeatmap();
+    setupHeatmapTooltip();
 }
 
 function renderItemList(containerId, items) {
@@ -2297,6 +2571,208 @@ function renderItemList(containerId, items) {
             <span class="per-book-time">${label}</span>
         </div>`;
     }).join('') + '</div>';
+}
+
+// ============================================================
+//  阅读热力图（GitHub 风格，按日期，月份横轴）
+// ============================================================
+let heatmapCells = []; // 供 tooltip 使用 [{x,y,w,h,date,duration,count}]
+
+function renderHeatmap() {
+    const canvas = document.getElementById('chart-heatmap');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    heatmapCells = [];
+
+    // 按日期聚合
+    const dayMap = {}; // 'YYYY-MM-DD' → { duration, count }
+    readingStats.forEach(r => {
+        const key = r.date;
+        if (!dayMap[key]) dayMap[key] = { duration: 0, count: 0 };
+        dayMap[key].duration += r.duration;
+        dayMap[key].count += 1;
+    });
+
+    // 找最大值
+    let maxVal = 0;
+    Object.values(dayMap).forEach(v => { if (v.duration > maxVal) maxVal = v.duration; });
+    if (maxVal === 0) maxVal = 1;
+
+    // 生成日期范围：过去 53 周，从最近的周日往回，补到本周六（含未来几天）
+    const today = new Date();
+    const endDate = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const endDow = endDate.getDay(); // 0=Sun
+    const gridEnd = new Date(endDate);
+    gridEnd.setDate(gridEnd.getDate() + (6 - endDow)); // 补到本周六
+    // 往回 53 周
+    const gridStart = new Date(gridEnd);
+    gridStart.setDate(gridStart.getDate() - 53 * 7 - 6);
+
+    // 绘制参数
+    const cellSize = 13, gap = 3;
+    const labelW = 32, labelH = 22;
+    const totalWeeks = Math.ceil((gridEnd - gridStart) / (7 * 86400000)) + 1;
+    const W = labelW + totalWeeks * (cellSize + gap) + 12;
+    const H = labelH + 7 * (cellSize + gap) + 28;
+    canvas.width = W;
+    canvas.height = H;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    canvas.style.maxWidth = 'none';
+
+    const isLight = document.body.classList.contains('light-theme');
+    ctx.clearRect(0, 0, W, H);
+
+    // 星期标签（一、三、五）
+    ctx.font = '10px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillStyle = isLight ? '#71717a' : '#52525b';
+    const dayLabels = ['', '一', '', '三', '', '五', ''];
+    for (let d = 0; d < 7; d++) {
+        if (dayLabels[d]) {
+            ctx.fillText(dayLabels[d], labelW - 4, labelH + d * (cellSize + gap) + cellSize - 2);
+        }
+    }
+
+    // 月份标签 + 单元格
+    let lastMonth = -1;
+    ctx.textAlign = 'center';
+    const cur = new Date(gridStart);
+    while (cur <= gridEnd) {
+        const dow = cur.getDay(); // 0=Sun
+        const weekIdx = Math.floor((cur - gridStart) / (7 * 86400000));
+        const x = labelW + weekIdx * (cellSize + gap);
+        const y = labelH + dow * (cellSize + gap);
+
+        // 月份标签
+        const m = cur.getMonth();
+        if (m !== lastMonth && dow === 0) {
+            const monthNames = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
+            ctx.fillStyle = isLight ? '#71717a' : '#52525b';
+            ctx.fillText(monthNames[m], x + cellSize / 2, labelH - 6);
+            lastMonth = m;
+        }
+
+        // 日期 key
+        const dateKey = cur.toISOString().slice(0, 10);
+        const val = dayMap[dateKey] || { duration: 0, count: 0 };
+
+        // 画方块
+        const r = 2;
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.lineTo(x + cellSize - r, y);
+        ctx.arcTo(x + cellSize, y, x + cellSize, y + r, r);
+        ctx.lineTo(x + cellSize, y + cellSize - r);
+        ctx.arcTo(x + cellSize, y + cellSize, x + cellSize - r, y + cellSize, r);
+        ctx.lineTo(x + r, y + cellSize);
+        ctx.arcTo(x, y + cellSize, x, y + cellSize - r, r);
+        ctx.lineTo(x, y + r);
+        ctx.arcTo(x, y, x + r, y, r);
+        ctx.closePath();
+
+        if (cur > endDate) {
+            // 未来的日期：虚线边框
+            ctx.strokeStyle = isLight ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.12)';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([3, 2]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.fillStyle = 'transparent';
+        } else if (val.duration === 0) {
+            ctx.fillStyle = isLight ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.06)';
+        } else {
+            const t = Math.min(val.duration / maxVal, 1);
+            const alpha = 0.2 + t * 0.8;
+            ctx.fillStyle = isLight
+                ? `rgba(79,70,229,${alpha})`
+                : `rgba(129,140,248,${alpha})`;
+        }
+        ctx.fill();
+
+        // 记录单元格信息（tooltip 用）
+        heatmapCells.push({
+            x, y, w: cellSize, h: cellSize,
+            date: dateKey,
+            duration: val.duration,
+            count: val.count,
+            future: cur > endDate
+        });
+
+        cur.setDate(cur.getDate() + 1);
+    }
+
+    // 底部图例
+    const legendY = labelH + 7 * (cellSize + gap) + 4;
+    ctx.font = '9px system-ui, sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = isLight ? '#71717a' : '#52525b';
+    ctx.fillText('少', labelW, legendY + 9);
+    for (let i = 0; i < 5; i++) {
+        const lx = labelW + 18 + i * (cellSize + gap);
+        ctx.beginPath();
+        ctx.roundRect(lx, legendY, cellSize, cellSize, 2);
+        const alpha = i === 0 ? 0.15 : 0.2 + (i / 4) * 0.8;
+        ctx.fillStyle = isLight
+            ? `rgba(79,70,229,${alpha})`
+            : `rgba(129,140,248,${alpha})`;
+        ctx.fill();
+    }
+    ctx.fillStyle = isLight ? '#71717a' : '#52525b';
+    ctx.fillText('多', labelW + 18 + 5 * (cellSize + gap) + 2, legendY + 9);
+}
+
+function setupHeatmapTooltip() {
+    const canvas = document.getElementById('chart-heatmap');
+    if (!canvas) return;
+    const wrap = canvas.parentElement;
+    let tooltip = wrap.querySelector('.heatmap-tooltip');
+    if (!tooltip) {
+        tooltip = document.createElement('div');
+        tooltip.className = 'heatmap-tooltip';
+        wrap.appendChild(tooltip);
+    }
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const wrapRect = wrap.getBoundingClientRect();
+        const mx = e.clientX - rect.left;
+        const my = e.clientY - rect.top;
+        const cell = heatmapCells.find(c => mx >= c.x && mx <= c.x + c.w && my >= c.y && my <= c.y + c.h);
+        if (cell) {
+            const dateStr = cell.date;
+            if (cell.future) {
+                tooltip.innerHTML = `<b>${dateStr}</b><br>尚未到来`;
+            } else if (cell.duration === 0) {
+                tooltip.innerHTML = `<b>${dateStr}</b><br>无阅读记录`;
+            } else {
+                const durStr = cell.duration >= 60 ? (cell.duration / 60).toFixed(1) + ' 小时' : cell.duration + ' 分钟';
+                tooltip.innerHTML = `<b>${dateStr}</b><br>${durStr}<br>${cell.count} 次阅读`;
+            }
+            tooltip.style.display = 'block';
+            // 自动翻转：上方/右侧出界时调整位置
+            const tipH = tooltip.offsetHeight || 48;
+            const tipW = tooltip.offsetWidth || 120;
+            let tx = cell.x + cell.w / 2;
+            let ty = cell.y - 8;
+            // 顶部出界 → 放到方块下方
+            const flipBelow = (ty - tipH < 0);
+            if (flipBelow) ty = cell.y + cell.h + 8;
+            tooltip.classList.toggle('below', flipBelow);
+            // 左侧出界
+            if (tx - tipW / 2 < 0) tx = tipW / 2 + 4;
+            // 右侧出界
+            const maxRight = wrap.scrollLeft + wrap.clientWidth;
+            if (tx + tipW / 2 > maxRight) tx = maxRight - tipW / 2 - 4;
+            tooltip.style.left = tx + 'px';
+            tooltip.style.top = ty + 'px';
+        } else {
+            tooltip.style.display = 'none';
+        }
+    });
+    canvas.addEventListener('mouseleave', () => {
+        tooltip.style.display = 'none';
+    });
 }
 
 // ============================================================
@@ -3105,6 +3581,10 @@ function bindEvents() {
         if (data.length > 0) { data.pop(); signaturePad.fromData(data); saveCurrentNotes(); }
     });
 
+    // 笔记导出
+    document.getElementById('btn-export-notes-md').addEventListener('click', exportNotesAsMd);
+    document.getElementById('btn-export-notes-pdf').addEventListener('click', exportNotesDrawing);
+
     // 笔记面板拖拽调整宽度
     initNotesPanelResize();
     initNotesPanelDrag();
@@ -3144,6 +3624,147 @@ function bindEvents() {
 }
 
 // ============================================================
+//  彭罗斯镶嵌底纹（五重对称 P3 tiling）
+// ============================================================
+function generatePenroseBackground() {
+    const existing = document.querySelector('.penrose-bg');
+    if (existing) existing.remove();
+
+    const canvas = document.createElement('canvas');
+    const W = 1200, H = 900;
+    canvas.width = W;
+    canvas.height = H;
+    const ctx = canvas.getContext('2d');
+
+    // 彭罗斯 P3 镶嵌：从 10 个等腰三角形开始，细分 5 次
+    const PHI = (1 + Math.sqrt(5)) / 2;
+
+    // 辅助：向量运算
+    function vLerp(a, b, t) {
+        return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
+    }
+
+    const cx = W / 2, cy = H / 2;
+    const R = Math.min(W, H) * 0.48;
+
+    // 初始：10 个三角形围绕中心，交替 A/B
+    let triangles = [];
+    for (let i = 0; i < 10; i++) {
+        const a1 = (Math.PI * 2 * i) / 10 - Math.PI / 2;
+        const a2 = (Math.PI * 2 * (i + 1)) / 10 - Math.PI / 2;
+        const p1 = { x: cx, y: cy };
+        const p2 = { x: cx + R * Math.cos(a1), y: cy + R * Math.sin(a1) };
+        const p3 = { x: cx + R * Math.cos(a2), y: cy + R * Math.sin(a2) };
+        // p1 是顶点（中心），p2-p3 是底边
+        // 偶数 A（尖端朝外），奇数 B（翻转）
+        triangles.push({ type: i % 2 === 0 ? 'A' : 'B', p1, p2, p3 });
+    }
+
+    // P3 deflation 规则
+    // A（36-72-72，p1 为 36° 顶点）→ 1 个 A + 1 个 B
+    // B（108-36-36，p1 为 108° 顶点）→ 2 个 B + 1 个 A
+    function subdivide(tris) {
+        const result = [];
+        for (const t of tris) {
+            const { type, p1, p2, p3 } = t;
+            if (type === 'A') {
+                // 在 p1→p3 上取黄金分割点 q
+                const q = vLerp(p1, p3, 1 / PHI);
+                result.push({ type: 'A', p1: p2, p2: q, p3: p1 });
+                result.push({ type: 'B', p1: q, p2: p3, p3: p2 });
+            } else {
+                // B 类型：在两条等边上取黄金分割点
+                const r = vLerp(p2, p1, 1 / PHI);
+                const s = vLerp(p2, p3, 1 / PHI);
+                result.push({ type: 'B', p1: r, p2: p3, p3: p1 });
+                result.push({ type: 'B', p1: s, p2: r, p3: p2 });
+                result.push({ type: 'A', p1: p3, p2: s, p3: r });
+            }
+        }
+        return result;
+    }
+
+    // 细分 5 次
+    for (let iter = 0; iter < 5; iter++) {
+        triangles = subdivide(triangles);
+    }
+
+    const isLight = document.body.classList.contains('light-theme');
+    // 紫色主题色
+    const fillA = isLight ? 'rgba(99,102,241,0.12)' : 'rgba(139,92,246,0.12)';
+    const fillB = isLight ? 'rgba(99,102,241,0.05)' : 'rgba(139,92,246,0.05)';
+    const lineColor = isLight ? 'rgba(99,102,241,0.4)' : 'rgba(139,92,246,0.4)';
+
+    // 绘制填充
+    for (const t of triangles) {
+        const { p1, p2, p3 } = t;
+        if (p1.x < -50 || p1.x > W + 50 || p1.y < -50 || p1.y > H + 50) continue;
+        if (p2.x < -50 || p2.x > W + 50 || p2.y < -50 || p2.y > H + 50) continue;
+        if (p3.x < -50 || p3.x > W + 50 || p3.y < -50 || p3.y > H + 50) continue;
+
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.fillStyle = t.type === 'A' ? fillA : fillB;
+        ctx.fill();
+    }
+
+    // 绘制边线
+    ctx.strokeStyle = lineColor;
+    ctx.lineWidth = 0.6;
+    for (const t of triangles) {
+        const { p1, p2, p3 } = t;
+        if (p1.x < -50 || p1.x > W + 50 || p1.y < -50 || p1.y > H + 50) continue;
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.lineTo(p3.x, p3.y);
+        ctx.closePath();
+        ctx.stroke();
+    }
+
+    // 转为图片背景
+    const div = document.createElement('div');
+    div.className = 'penrose-bg';
+    div.style.backgroundImage = `url(${canvas.toDataURL()})`;
+    div.style.backgroundSize = 'cover';
+    div.style.backgroundPosition = 'center';
+    document.body.prepend(div);
+
+    // 应用已保存的透明度
+    localforage.getItem('penroseOpacity').then(val => {
+        if (val != null) {
+            document.documentElement.style.setProperty('--penrose-opacity', val / 100);
+        }
+    });
+}
+
+// ---- 设置页 ----
+function initSettings() {
+    const slider = document.getElementById('penrose-opacity-slider');
+    const valueEl = document.getElementById('penrose-opacity-value');
+    if (!slider) return;
+
+    // 读取已保存的透明度
+    localforage.getItem('penroseOpacity').then(val => {
+        const v = val != null ? val : 7;
+        slider.value = v;
+        valueEl.textContent = v + '%';
+    });
+
+    slider.oninput = () => {
+        const v = +slider.value;
+        valueEl.textContent = v + '%';
+        document.documentElement.style.setProperty('--penrose-opacity', v / 100);
+        localforage.setItem('penroseOpacity', v);
+    };
+
+    lucide.createIcons();
+}
+
+// ============================================================
 //  初始化
 // ============================================================
 (async function init() {
@@ -3152,6 +3773,12 @@ function bindEvents() {
         await loadState();
         bindEvents();
         renderShelf();
+        await generatePenroseBackground();
+        // 应用已保存的底纹透明度
+        const savedOpacity = await localforage.getItem('penroseOpacity');
+        if (savedOpacity != null) {
+            document.documentElement.style.setProperty('--penrose-opacity', savedOpacity / 100);
+        }
         lucide.createIcons();
         console.log('[Lumina] 初始化完成，驱动:', STORAGE_DRIVER, '书籍:', library.length);
     } catch (e) {
