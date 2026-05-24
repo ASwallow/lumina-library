@@ -1724,15 +1724,18 @@ async function renderScrollMode() {
     body.className = 'reader-scroll';
     body.innerHTML = '';
 
-    // 创建所有 canvas 占位
-    for (let i = 1; i <= totalPages; i++) {
-        const canvas = document.createElement('canvas');
-        canvas.id = 'scroll-page-' + i;
-        canvas.dataset.page = i;
-        // 预设 CSS 宽度，让页面撑开；高度由渲染后确定
-        canvas.style.width = 'min(100%, ' + Math.round(612 * currentZoom / 1.5) + 'px)';
-        body.appendChild(canvas);
+    // 先创建当前页附近的 canvas，立刻显示，其余分批创建
+    const BATCH_SIZE = 50;
+    const cur = currentPage;
+    const startPage = Math.max(1, cur - 20);
+    const endPage = Math.min(totalPages, cur + 20);
+
+    // 第一批：当前页附近，立即创建并挂载
+    const frag = document.createDocumentFragment();
+    for (let i = startPage; i <= endPage; i++) {
+        frag.appendChild(createScrollCanvas(i));
     }
+    body.appendChild(frag);
 
     // IntersectionObserver 懒渲染
     cleanupScrollObserver();
@@ -1748,12 +1751,46 @@ async function renderScrollMode() {
         });
     }, { root: body, rootMargin: '200px', threshold: 0.01 });
 
-    body.querySelectorAll('canvas').forEach(c => scrollObserver.observe(c));
+    body.querySelectorAll('canvas').forEach(c => { c.dataset.observed = '1'; scrollObserver.observe(c); });
     updatePageUI();
 
     // 滚动到当前页
     const target = document.getElementById('scroll-page-' + currentPage);
     if (target) target.scrollIntoView({ behavior: 'instant', block: 'start' });
+
+    // 剩余页面分批创建，每批之间让出主线程
+    await createCanvasBatches(body, 1, startPage - 1, BATCH_SIZE);
+    await createCanvasBatches(body, endPage + 1, totalPages, BATCH_SIZE);
+}
+
+function createScrollCanvas(pageNum) {
+    const canvas = document.createElement('canvas');
+    canvas.id = 'scroll-page-' + pageNum;
+    canvas.dataset.page = pageNum;
+    canvas.style.width = 'min(100%, ' + Math.round(612 * currentZoom / 1.5) + 'px)';
+    return canvas;
+}
+
+async function createCanvasBatches(body, from, to, batchSize) {
+    if (from > to) return;
+    for (let start = from; start <= to; start += batchSize) {
+        if (!pdfDoc) return; // 阅读器已关闭，中止
+        const end = Math.min(to, start + batchSize - 1);
+        const frag = document.createDocumentFragment();
+        for (let i = start; i <= end; i++) {
+            frag.appendChild(createScrollCanvas(i));
+        }
+        body.appendChild(frag);
+        // 让出主线程，避免卡顿
+        await new Promise(r => setTimeout(r, 0));
+    }
+    // 新加入的 canvas 也要被 observer 监听
+    if (scrollObserver && pdfDoc) {
+        body.querySelectorAll('canvas:not([data-observed])').forEach(c => {
+            c.dataset.observed = '1';
+            scrollObserver.observe(c);
+        });
+    }
 }
 
 async function renderScrollPage(canvas, pageNum) {
@@ -1803,23 +1840,45 @@ function zoomOut() {
 }
 function applyZoom() {
     if (readMode === 'scroll') {
-        // 滚动模式：只更新占位宽度 + 重置渲染标记，不立即重渲染
-        // IntersectionObserver 会在用户滚动时自动重渲染可见页
         const body = document.getElementById('reader-body');
+        const curPage = currentPage;
+        const curCanvas = document.getElementById('scroll-page-' + curPage);
+
+        // 缩放前：记录当前页内的偏移比例
+        let savedRatio = 0;
+        if (curCanvas && curCanvas.offsetHeight > 0) {
+            const bodyRect = body.getBoundingClientRect();
+            const canvasTopInContent = curCanvas.getBoundingClientRect().top - bodyRect.top + body.scrollTop;
+            savedRatio = (body.scrollTop - canvasTopInContent) / curCanvas.offsetHeight;
+        }
+
+        // 更新所有 canvas 占位宽度 + 重置渲染标记
         body.querySelectorAll('canvas').forEach(c => {
-            c.dataset.rendered = '';  // 标记为未渲染
+            c.dataset.rendered = '';
             c.style.width = 'min(100%, ' + Math.round(612 * currentZoom / 1.5) + 'px)';
         });
-        // 手动触发当前可见页的 observer
-        if (scrollObserver) {
-            body.querySelectorAll('canvas').forEach(c => {
-                const rect = c.getBoundingClientRect();
-                const rootRect = body.getBoundingClientRect();
-                if (rect.top < rootRect.bottom && rect.bottom > rootRect.top) {
-                    if (!c.dataset.rendered) renderScrollPage(c, parseInt(c.dataset.page));
+
+        // 立即渲染当前页，恢复位置后再渲染其他可见页
+        if (curCanvas) {
+            renderScrollPage(curCanvas, curPage).then(() => {
+                const bodyRect = body.getBoundingClientRect();
+                const canvasTopInContent = curCanvas.getBoundingClientRect().top - bodyRect.top + body.scrollTop;
+                body.scrollTop = canvasTopInContent + savedRatio * curCanvas.offsetHeight;
+
+                // 当前页位置恢复后，渲染其他可见页
+                if (scrollObserver) {
+                    body.querySelectorAll('canvas').forEach(c => {
+                        if (c === curCanvas) return;
+                        const rect = c.getBoundingClientRect();
+                        const rootRect = body.getBoundingClientRect();
+                        if (rect.top < rootRect.bottom && rect.bottom > rootRect.top) {
+                            if (!c.dataset.rendered) renderScrollPage(c, parseInt(c.dataset.page));
+                        }
+                    });
                 }
             });
         }
+
         updatePageUI();
     } else {
         // 单页/双页模式：直接重渲染

@@ -29,6 +29,7 @@ desktop.ini
 
 # Claude
 .claude/
+CLAUDE.md
 
 # Env / secrets
 .env
