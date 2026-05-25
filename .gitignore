@@ -3,20 +3,22 @@ node_modules/
 
 # Tauri build output
 src-tauri/target/
+src-tauri/gen/
 
 # Frontend build output
 dist/
 
 # Release binaries
-release/*.exe
-release/*.msi
 release/Lumina Library/
+release/yread Lib/
 
 # Large downloaded tools
 nsis-3.11/
 nsis-3.11.zip
 rustup-init.exe
 vs_buildtools.exe
+lib/tesseract*
+lib/tessdata/
 
 # OS files
 .DS_Store

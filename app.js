@@ -31,6 +31,11 @@ function arrayToUint8(arr) {
     return new Uint8Array(arr);
 }
 
+/** 本地日期 YYYY-MM-DD（避免 toISOString 的 UTC 时区偏移） */
+function localDateStr(d) {
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
 // ============================================================
 //  全局状态
 // ============================================================
@@ -97,6 +102,11 @@ async function loadState() {
         if (stats) readingStats = stats;
         const oc = await localforage.getItem('openedCount');
         if (oc) openedCount = oc;
+        // 恢复主题色（必须在主题切换前加载）
+        const dci = await localforage.getItem('darkThemeColorIdx');
+        if (dci != null) darkThemeColorIdx = dci;
+        const lci = await localforage.getItem('lightThemeColorIdx');
+        if (lci != null) lightThemeColorIdx = lci;
         // 恢复主题
         const theme = await localforage.getItem('theme');
         if (theme === 'light') applyTheme('light');
@@ -121,20 +131,58 @@ async function loadState() {
 }
 
 // ============================================================
-//  主题切换
+//  主题切换 + 主题色
 // ============================================================
-function applyTheme(theme) {
-    if (theme === 'light') {
-        document.body.classList.add('light-theme');
-        const icon = document.getElementById('theme-icon');
-        icon.setAttribute('data-lucide', 'moon');
-        lucide.createIcons();
-    } else {
-        document.body.classList.remove('light-theme');
-        const icon = document.getElementById('theme-icon');
-        icon.setAttribute('data-lucide', 'sun');
-        lucide.createIcons();
+
+// 可选主题色：{ name, dark: {accent, bg, gradient, gradientFill}, light: {...} }
+const THEME_COLORS = [
+    {
+        name: '靛蓝', dark: { accent: '#818cf8', rgb: '129,140,248', bg: 'rgba(99,102,241,0.15)', hover: 'rgba(99,102,241,0.1)', gradient: 'linear-gradient(135deg,#818cf8,#c084fc)', gradientFill: 'linear-gradient(90deg,#6366f1,#a78bfa)', bgProgress: 'rgba(99,102,241,0.15)' },
+        light: { accent: '#4f46e5', rgb: '79,70,229', bg: 'rgba(79,70,229,0.12)', hover: 'rgba(79,70,229,0.08)', gradient: 'linear-gradient(135deg,#4f46e5,#7c3aed)', gradientFill: 'linear-gradient(90deg,#4f46e5,#818cf8)', bgProgress: 'rgba(99,102,241,0.12)' }
+    },
+    {
+        name: '紫色', dark: { accent: '#c084fc', rgb: '192,132,252', bg: 'rgba(168,85,247,0.15)', hover: 'rgba(168,85,247,0.1)', gradient: 'linear-gradient(135deg,#c084fc,#e879f9)', gradientFill: 'linear-gradient(90deg,#a855f7,#d946ef)', bgProgress: 'rgba(168,85,247,0.15)' },
+        light: { accent: '#9333ea', rgb: '147,51,234', bg: 'rgba(147,51,234,0.12)', hover: 'rgba(147,51,234,0.08)', gradient: 'linear-gradient(135deg,#9333ea,#c026d3)', gradientFill: 'linear-gradient(90deg,#9333ea,#a855f7)', bgProgress: 'rgba(147,51,234,0.12)' }
+    },
+    {
+        name: '青色', dark: { accent: '#22d3ee', rgb: '34,211,238', bg: 'rgba(6,182,212,0.15)', hover: 'rgba(6,182,212,0.1)', gradient: 'linear-gradient(135deg,#22d3ee,#67e8f9)', gradientFill: 'linear-gradient(90deg,#06b6d4,#22d3ee)', bgProgress: 'rgba(6,182,212,0.15)' },
+        light: { accent: '#0891b2', rgb: '8,145,178', bg: 'rgba(8,145,178,0.12)', hover: 'rgba(8,145,178,0.08)', gradient: 'linear-gradient(135deg,#0891b2,#06b6d4)', gradientFill: 'linear-gradient(90deg,#0891b2,#0e7490)', bgProgress: 'rgba(8,145,178,0.12)' }
+    },
+    {
+        name: '翠绿', dark: { accent: '#34d399', rgb: '52,211,153', bg: 'rgba(16,185,129,0.15)', hover: 'rgba(16,185,129,0.1)', gradient: 'linear-gradient(135deg,#34d399,#6ee7b7)', gradientFill: 'linear-gradient(90deg,#10b981,#34d399)', bgProgress: 'rgba(16,185,129,0.15)' },
+        light: { accent: '#059669', rgb: '5,150,105', bg: 'rgba(5,150,105,0.12)', hover: 'rgba(5,150,105,0.08)', gradient: 'linear-gradient(135deg,#059669,#10b981)', gradientFill: 'linear-gradient(90deg,#059669,#047857)', bgProgress: 'rgba(5,150,105,0.12)' }
+    },
+    {
+        name: '玫红', dark: { accent: '#fb7185', rgb: '251,113,133', bg: 'rgba(244,63,94,0.15)', hover: 'rgba(244,63,94,0.1)', gradient: 'linear-gradient(135deg,#fb7185,#fda4af)', gradientFill: 'linear-gradient(90deg,#f43f5e,#fb7185)', bgProgress: 'rgba(244,63,94,0.15)' },
+        light: { accent: '#e11d48', rgb: '225,29,72', bg: 'rgba(225,29,72,0.12)', hover: 'rgba(225,29,72,0.08)', gradient: 'linear-gradient(135deg,#e11d48,#f43f5e)', gradientFill: 'linear-gradient(90deg,#e11d48,#be123c)', bgProgress: 'rgba(225,29,72,0.12)' }
     }
+];
+
+function applyAccentColor(theme, colorIdx) {
+    const isLight = theme === 'light';
+    const palette = THEME_COLORS[colorIdx] || THEME_COLORS[0];
+    const c = isLight ? palette.light : palette.dark;
+    const root = document.documentElement.style;
+    root.setProperty('--accent', c.accent);
+    root.setProperty('--accent-rgb', c.rgb);
+    root.setProperty('--accent-bg', c.bg);
+    root.setProperty('--accent-bg-hover', c.hover);
+    root.setProperty('--accent-border', c.hover);
+    root.setProperty('--accent-gradient', c.gradient);
+    root.setProperty('--accent-gradient-fill', c.gradientFill);
+    root.setProperty('--bg-progress', c.bgProgress);
+}
+
+let darkThemeColorIdx = 0;  // 暗色主题色索引
+let lightThemeColorIdx = 0; // 亮色主题色索引
+
+function applyTheme(theme) {
+    const isLight = theme === 'light';
+    document.body.classList.toggle('light-theme', isLight);
+    const icon = document.getElementById('theme-icon');
+    icon.setAttribute('data-lucide', isLight ? 'moon' : 'sun');
+    lucide.createIcons();
+    applyAccentColor(theme, isLight ? lightThemeColorIdx : darkThemeColorIdx);
 }
 
 function toggleTheme() {
@@ -143,6 +191,8 @@ function toggleTheme() {
     applyTheme(next);
     localforage.setItem('theme', next);
     generatePenroseBackground();
+    // 刷新颜色选择器高亮
+    updateColorSwatchActive();
 }
 
 /** 保存书库元数据 */
@@ -412,22 +462,14 @@ function withTimeout(promise, ms, label) {
     ]);
 }
 
-/** 通用 PDF 解析：先尝试 Worker，失败/超时回退到主线程 */
+/** 通用 PDF 解析：主线程解析（Tauri 自定义协议不支持 Worker） */
 async function parsePdf(uint8, timeoutMs) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = 'lib/pdf.worker.min.js';
-    // 每次传给 Worker 前拷贝一份，避免 ArrayBuffer 被 detach 后原始数据不可用
     const copy = new Uint8Array(uint8);
-    try {
-        return await withTimeout(
-            pdfjsLib.getDocument({ data: copy }).promise,
-            timeoutMs,
-            'Worker 解析'
-        );
-    } catch (e) {
-        console.warn('[Lumina] Worker 解析失败，回退主线程:', e.message);
-        const fallback = new Uint8Array(uint8);
-        return await pdfjsLib.getDocument({ data: fallback, disableWorker: true }).promise;
-    }
+    return await withTimeout(
+        pdfjsLib.getDocument({ data: copy, disableWorker: true }).promise,
+        timeoutMs,
+        'PDF 解析'
+    );
 }
 
 /** 从 PDF 第一页生成封面缩略图 + 获取页数 */
@@ -595,7 +637,8 @@ function generatePlaceholder(name) {
 // ============================================================
 function extractDominantColor(imgSrc) {
     return new Promise(resolve => {
-        if (!imgSrc || imgSrc.length < 10) { resolve('#4f46e5'); return; }
+        const fallback = () => getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#818cf8';
+        if (!imgSrc || imgSrc.length < 10) { resolve(fallback()); return; }
         const img = new Image();
         img.onload = () => {
             try {
@@ -607,10 +650,10 @@ function extractDominantColor(imgSrc) {
                 const d = ctx.getImageData(0, 0, 1, 1).data;
                 resolve(`rgb(${d[0]},${d[1]},${d[2]})`);
             } catch (e) {
-                resolve('#4f46e5');
+                resolve(fallback());
             }
         };
-        img.onerror = () => resolve('#4f46e5');
+        img.onerror = () => resolve(fallback());
         img.src = imgSrc;
     });
 }
@@ -895,7 +938,7 @@ function setupPaperNameEditor(paper) {
     el.addEventListener('click', () => {
         const input = document.createElement('input');
         input.type = 'text'; input.value = paper.name;
-        input.style.cssText = 'font-size:inherit;font-weight:inherit;color:inherit;background:var(--bg-surface-hover);border:1px solid #818cf8;border-radius:6px;padding:2px 8px;outline:none;width:100%;box-sizing:border-box;';
+        input.style.cssText = 'font-size:inherit;font-weight:inherit;color:inherit;background:var(--bg-surface-hover);border:1px solid var(--accent);border-radius:6px;padding:2px 8px;outline:none;width:100%;box-sizing:border-box;';
         el.replaceWith(input); input.focus(); input.select();
         async function save() {
             const newName = input.value.trim();
@@ -1088,7 +1131,7 @@ function renderBookGroup(tag, books) {
             <div class="book-card" data-id="${book.id}">
                 <div class="book-cover">
                     <img src="${coverSrc}" alt="${escHtml(book.name)}" loading="lazy">
-                    <div class="book-spine" style="background:linear-gradient(to right, ${book.coverColor || '#4f46e5'}, transparent);"></div>
+                    <div class="book-spine" style="background:linear-gradient(to right, ${book.coverColor || 'var(--accent)'}, transparent);"></div>
                     <div class="book-title-overlay">
                         <div class="name">${escHtml(book.name)}</div>
                         ${book.pageCount ? `<div class="pages">${book.pageCount} 页</div>` : ''}
@@ -1273,7 +1316,7 @@ function setupBookNameEditor(book) {
         input.type = 'text';
         input.value = book.name;
         input.className = 'detail-book-name-input';
-        input.style.cssText = 'font-size:inherit;font-weight:inherit;color:inherit;background:var(--bg-surface-hover);border:1px solid #818cf8;border-radius:6px;padding:2px 8px;outline:none;width:100%;box-sizing:border-box;';
+        input.style.cssText = 'font-size:inherit;font-weight:inherit;color:inherit;background:var(--bg-surface-hover);border:1px solid var(--accent);border-radius:6px;padding:2px 8px;outline:none;width:100%;box-sizing:border-box;';
 
         el.replaceWith(input);
         input.focus();
@@ -2020,7 +2063,7 @@ function recordReadingStat() {
     const now = new Date();
     readingStats.push({
         bookId: currentBookId,
-        date: now.toISOString().slice(0, 10),
+        date: localDateStr(now),
         duration,
         page: currentPage,
         isPaper: isPaperReader || false,
@@ -2222,7 +2265,7 @@ function generateArtCover() {
         }
         return h >>> 0;
     }
-    const _seed = seedHash(book.name || 'untitled');
+    const _seed = seedHash((book.name || 'untitled') + Date.now());
     let _s = _seed || 1;
     function srand() {
         _s |= 0; _s = _s + 0x6D2B79F5 | 0;
@@ -2239,23 +2282,47 @@ function generateArtCover() {
     ctx.fillRect(0, 0, W, H);
 
     if (style === 0) {
-        // ---- 三叶结 / 八字结 / 环面纽结的平面投影 ----
-        const knotType = srandInt(0, 2); // 0=trefoil, 1=figure-eight, 2=torus(2,3)
+        // ---- 复杂纽结平面投影 ----
+        const knotType = srandInt(0, 7);
 
         function knotPoint(t) {
             let x, y;
             if (knotType === 0) {
-                // 三叶结 (trefoil knot)
+                // 三叶结
                 x = Math.sin(t) + 2 * Math.sin(2 * t);
                 y = Math.cos(t) - 2 * Math.cos(2 * t);
             } else if (knotType === 1) {
-                // 八字结 (figure-eight knot)
+                // 八字结
                 x = (2 + Math.cos(2 * t)) * Math.cos(3 * t);
                 y = (2 + Math.cos(2 * t)) * Math.sin(3 * t);
+            } else if (knotType === 2) {
+                // Torus(2,3)
+                const r = 2 + Math.cos(3 * t / 2);
+                x = r * Math.cos(t);
+                y = r * Math.sin(t);
+            } else if (knotType === 3) {
+                // 五瓣结 Torus(2,5)
+                const r = 2 + Math.cos(5 * t / 2);
+                x = r * Math.cos(t);
+                y = r * Math.sin(t);
+            } else if (knotType === 4) {
+                // Torus(3,4)
+                const r = 2 + Math.cos(4 * t / 3);
+                x = r * Math.cos(t);
+                y = r * Math.sin(t);
+            } else if (knotType === 5) {
+                // Lissajous 结 (3,4)
+                x = 3 * Math.sin(3 * t + 0.5);
+                y = 3 * Math.sin(4 * t);
+            } else if (knotType === 6) {
+                // 玫瑰线结
+                const k = 2.5;
+                const R = 2.5 * Math.cos(k * t);
+                x = R * Math.cos(t);
+                y = R * Math.sin(t);
             } else {
-                // 环面纽结 Torus(2,3)
-                const p = 2, q = 3;
-                const r = 2 + Math.cos(q * t / p);
+                // 扭曲环面 Torus(4,5)
+                const r = 2 + Math.cos(5 * t / 4);
                 x = r * Math.cos(t);
                 y = r * Math.sin(t);
             }
@@ -2286,7 +2353,7 @@ function generateArtCover() {
         }
 
         const scale = 55 + c * 35;
-        const cx = W / 2, cy = H / 2 - 60;
+        const cx = W / 2, cy = H / 2 - 80;
 
         for (let s = 0; s < numStrands; s++) {
             const offset = s * 0.15;
@@ -2425,6 +2492,8 @@ function generateArtCover() {
     }
 
     // 书名标签
+
+    // 书名标签
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
     ctx.fillRect(20, H - 100, W - 40, 60);
     ctx.fillStyle = '#fff';
@@ -2457,8 +2526,36 @@ let booksTagsChart = null;
 let papersWeeklyChart = null;
 let papersTagsChart = null;
 
+/** 从当前主题色生成一组调色板（10色） */
+function generateAccentPalette() {
+    const root = getComputedStyle(document.documentElement);
+    const hex = root.getPropertyValue('--accent').trim() || '#818cf8';
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    let h, s, l = (max + min) / 2;
+    if (max === min) { h = s = 0; }
+    else {
+        const d = max - min;
+        s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+        if (max === r) h = ((g - b) / d + (g < b ? 6 : 0)) / 6;
+        else if (max === g) h = ((b - r) / d + 2) / 6;
+        else h = ((r - g) / d + 4) / 6;
+    }
+    h *= 360;
+    const colors = [];
+    for (let i = 0; i < 10; i++) {
+        const shift = (h + i * 36 + 180) % 360;
+        const sat = Math.round(Math.min(100, Math.max(40, s * 100 + (i % 3 - 1) * 15)));
+        const lit = Math.round(Math.min(70, Math.max(45, l * 100 + (i % 2) * 10)));
+        colors.push(`hsl(${Math.round(shift)}, ${sat}%, ${lit}%)`);
+    }
+    return colors;
+}
+
 function renderDashboard() {
-    const tagColors = ['#6366f1','#ec4899','#f59e0b','#10b981','#06b6d4','#8b5cf6','#ef4444','#f97316','#14b8a6','#a855f7'];
+    const tagColors = generateAccentPalette();
     const chartOpts = {
         responsive: true,
         plugins: { legend: { display: false } },
@@ -2496,13 +2593,15 @@ function renderDashboard() {
     // 书籍按周
     const now = new Date();
     const weekKeys = [];
-    for (let i = 6; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); weekKeys.push(d.toISOString().slice(5, 10)); }
+    for (let i = 6; i >= 0; i--) { const d = new Date(now); d.setDate(d.getDate() - i); weekKeys.push(localDateStr(d).slice(5)); }
     const booksWeek = {}; weekKeys.forEach(k => booksWeek[k] = 0);
     bookStats.forEach(r => { const k = r.date.slice(5, 10); if (booksWeek[k] !== undefined) booksWeek[k] += r.duration; });
 
+    const accentRGB = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim() || '129,140,248';
+
     if (booksWeeklyChart) booksWeeklyChart.destroy();
     booksWeeklyChart = new Chart(document.getElementById('chart-books-weekly'), {
-        type: 'bar', data: { labels: weekKeys, datasets: [{ label: '分钟', data: Object.values(booksWeek), backgroundColor: 'rgba(99,102,241,0.6)', borderColor: 'rgba(99,102,241,1)', borderWidth: 1, borderRadius: 6 }] }, options: chartOpts
+        type: 'bar', data: { labels: weekKeys, datasets: [{ label: '分钟', data: Object.values(booksWeek), backgroundColor: `rgba(${accentRGB},0.6)`, borderColor: `rgba(${accentRGB},1)`, borderWidth: 1, borderRadius: 6 }] }, options: chartOpts
     });
 
     // 书籍标签
@@ -2532,7 +2631,7 @@ function renderDashboard() {
 
     if (papersWeeklyChart) papersWeeklyChart.destroy();
     papersWeeklyChart = new Chart(document.getElementById('chart-papers-weekly'), {
-        type: 'bar', data: { labels: weekKeys, datasets: [{ label: '分钟', data: Object.values(papersWeek), backgroundColor: 'rgba(236,72,153,0.6)', borderColor: 'rgba(236,72,153,1)', borderWidth: 1, borderRadius: 6 }] }, options: chartOpts
+        type: 'bar', data: { labels: weekKeys, datasets: [{ label: '分钟', data: Object.values(papersWeek), backgroundColor: `rgba(${accentRGB},0.6)`, borderColor: `rgba(${accentRGB},1)`, borderWidth: 1, borderRadius: 6 }] }, options: chartOpts
     });
 
     // 论文标签
@@ -2583,6 +2682,7 @@ function renderHeatmap() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     heatmapCells = [];
+    const accentRGB = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim() || '129,140,248';
 
     // 按日期聚合
     const dayMap = {}; // 'YYYY-MM-DD' → { duration, count }
@@ -2654,7 +2754,7 @@ function renderHeatmap() {
         }
 
         // 日期 key
-        const dateKey = cur.toISOString().slice(0, 10);
+        const dateKey = localDateStr(cur);
         const val = dayMap[dateKey] || { duration: 0, count: 0 };
 
         // 画方块
@@ -2684,9 +2784,7 @@ function renderHeatmap() {
         } else {
             const t = Math.min(val.duration / maxVal, 1);
             const alpha = 0.2 + t * 0.8;
-            ctx.fillStyle = isLight
-                ? `rgba(79,70,229,${alpha})`
-                : `rgba(129,140,248,${alpha})`;
+            ctx.fillStyle = `rgba(${accentRGB},${alpha})`;
         }
         ctx.fill();
 
@@ -2713,9 +2811,7 @@ function renderHeatmap() {
         ctx.beginPath();
         ctx.roundRect(lx, legendY, cellSize, cellSize, 2);
         const alpha = i === 0 ? 0.15 : 0.2 + (i / 4) * 0.8;
-        ctx.fillStyle = isLight
-            ? `rgba(79,70,229,${alpha})`
-            : `rgba(129,140,248,${alpha})`;
+        ctx.fillStyle = `rgba(${accentRGB},${alpha})`;
         ctx.fill();
     }
     ctx.fillStyle = isLight ? '#71717a' : '#52525b';
@@ -3631,7 +3727,8 @@ function generatePenroseBackground() {
     if (existing) existing.remove();
 
     const canvas = document.createElement('canvas');
-    const W = 1200, H = 900;
+    // 画布大于视口，旋转时不会露出边缘
+    const W = 1920, H = 1440;
     canvas.width = W;
     canvas.height = H;
     const ctx = canvas.getContext('2d');
@@ -3690,10 +3787,13 @@ function generatePenroseBackground() {
     }
 
     const isLight = document.body.classList.contains('light-theme');
-    // 紫色主题色
-    const fillA = isLight ? 'rgba(99,102,241,0.12)' : 'rgba(139,92,246,0.12)';
-    const fillB = isLight ? 'rgba(99,102,241,0.05)' : 'rgba(139,92,246,0.05)';
-    const lineColor = isLight ? 'rgba(99,102,241,0.4)' : 'rgba(139,92,246,0.4)';
+    // 取当前主题色
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#818cf8';
+    const accentRGB = getComputedStyle(document.documentElement).getPropertyValue('--accent-rgb').trim() || '129,140,248';
+    // 主题色（暗主题下提高对比度）
+    const fillA = isLight ? `rgba(${accentRGB},0.12)` : `rgba(${accentRGB},0.35)`;
+    const fillB = isLight ? `rgba(${accentRGB},0.05)` : `rgba(${accentRGB},0.15)`;
+    const lineColor = isLight ? `rgba(${accentRGB},0.4)` : `rgba(${accentRGB},0.7)`;
 
     // 绘制填充
     for (const t of triangles) {
@@ -3725,12 +3825,13 @@ function generatePenroseBackground() {
         ctx.stroke();
     }
 
-    // 转为图片背景
+    // 转为图片背景（大画布 + CSS 动画旋转漂移）
     const div = document.createElement('div');
     div.className = 'penrose-bg';
+    div.style.width = W + 'px';
+    div.style.height = H + 'px';
     div.style.backgroundImage = `url(${canvas.toDataURL()})`;
-    div.style.backgroundSize = 'cover';
-    div.style.backgroundPosition = 'center';
+    div.style.backgroundSize = '100% 100%';
     document.body.prepend(div);
 
     // 应用已保存的透明度
@@ -3761,7 +3862,53 @@ function initSettings() {
         localforage.setItem('penroseOpacity', v);
     };
 
+    // 渲染主题色选择器
+    renderColorPicks('dark-color-picks', 'dark');
+    renderColorPicks('light-color-picks', 'light');
+
     lucide.createIcons();
+}
+
+function renderColorPicks(containerId, mode) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    const isLight = mode === 'light';
+    THEME_COLORS.forEach((palette, idx) => {
+        const c = isLight ? palette.light : palette.dark;
+        const activeIdx = isLight ? lightThemeColorIdx : darkThemeColorIdx;
+        const swatch = document.createElement('div');
+        swatch.className = 'color-swatch' + (idx === activeIdx ? ' active' : '');
+        swatch.style.background = c.accent;
+        swatch.title = palette.name;
+        swatch.addEventListener('click', () => {
+            if (isLight) {
+                lightThemeColorIdx = idx;
+                localforage.setItem('lightThemeColorIdx', idx);
+            } else {
+                darkThemeColorIdx = idx;
+                localforage.setItem('darkThemeColorIdx', idx);
+            }
+            // 应用当前主题对应的颜色
+            const currentTheme = document.body.classList.contains('light-theme') ? 'light' : 'dark';
+            if ((isLight && currentTheme === 'light') || (!isLight && currentTheme === 'dark')) {
+                applyAccentColor(currentTheme, idx);
+                generatePenroseBackground();
+            }
+            // 重新渲染选择器高亮
+            renderColorPicks(containerId, mode);
+        });
+        container.appendChild(swatch);
+    });
+}
+
+function updateColorSwatchActive() {
+    document.querySelectorAll('#dark-color-picks .color-swatch').forEach((el, idx) => {
+        el.classList.toggle('active', idx === darkThemeColorIdx);
+    });
+    document.querySelectorAll('#light-color-picks .color-swatch').forEach((el, idx) => {
+        el.classList.toggle('active', idx === lightThemeColorIdx);
+    });
 }
 
 // ============================================================
@@ -3771,6 +3918,10 @@ function initSettings() {
     try {
         await initStorage();
         await loadState();
+        // 如果是暗色主题（默认），手动应用主题色
+        if (!document.body.classList.contains('light-theme')) {
+            applyAccentColor('dark', darkThemeColorIdx);
+        }
         bindEvents();
         renderShelf();
         await generatePenroseBackground();
