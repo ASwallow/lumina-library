@@ -406,36 +406,52 @@
     <!-- 计算器面板 -->
     <div class="calc-panel" id="calc-panel">
         <div class="calc-header">
-            <span>计算器</span>
             <div class="calc-mode-toggle">
                 <button class="calc-mode-btn active" data-calc-mode="simple">简易</button>
                 <button class="calc-mode-btn" data-calc-mode="scientific">科学</button>
             </div>
+            <button class="calc-angle-btn" id="calc-angle-btn" title="角度/弧度">Deg</button>
             <button class="btn-icon" id="btn-close-calc"><i data-lucide="x"></i></button>
         </div>
-        <div class="calc-display" id="calc-display">0</div>
+        <div class="calc-display" id="calc-display">
+            <div class="calc-expr"></div>
+            <div class="calc-result">0</div>
+        </div>
         <div class="calc-sci hidden" id="calc-sci">
             <button class="calc-sci-btn" data-fn="sin">sin</button>
             <button class="calc-sci-btn" data-fn="cos">cos</button>
             <button class="calc-sci-btn" data-fn="tan">tan</button>
-            <button class="calc-sci-btn" data-fn="asin">asin</button>
-            <button class="calc-sci-btn" data-fn="acos">acos</button>
-            <button class="calc-sci-btn" data-fn="atan">atan</button>
+            <button class="calc-sci-btn" data-fn="asin">sin⁻¹</button>
+            <button class="calc-sci-btn" data-fn="acos">cos⁻¹</button>
+            <button class="calc-sci-btn" data-fn="atan">tan⁻¹</button>
+            <button class="calc-sci-btn" data-fn="sinh">sinh</button>
+            <button class="calc-sci-btn" data-fn="cosh">cosh</button>
+            <button class="calc-sci-btn" data-fn="tanh">tanh</button>
+            <button class="calc-sci-btn" data-fn="asinh">sinh⁻¹</button>
+            <button class="calc-sci-btn" data-fn="acosh">cosh⁻¹</button>
+            <button class="calc-sci-btn" data-fn="atanh">tanh⁻¹</button>
             <button class="calc-sci-btn" data-fn="log">log</button>
+            <button class="calc-sci-btn" data-fn="log2">log₂</button>
             <button class="calc-sci-btn" data-fn="ln">ln</button>
+            <button class="calc-sci-btn" data-fn="exp">eˣ</button>
             <button class="calc-sci-btn" data-fn="sqrt">√</button>
-            <button class="calc-sci-btn" data-fn="pow">x^y</button>
-            <button class="calc-sci-btn" data-fn="pi">π</button>
-            <button class="calc-sci-btn" data-fn="e">e</button>
-            <button class="calc-sci-btn" data-fn="exp">e^x</button>
+            <button class="calc-sci-btn" data-fn="cbrt">∛</button>
+            <button class="calc-sci-btn" data-fn="pow2">x²</button>
+            <button class="calc-sci-btn" data-fn="pow3">x³</button>
+            <button class="calc-sci-btn" data-fn="pow10">10ˣ</button>
+            <button class="calc-sci-btn" data-fn="pow2x">2ˣ</button>
             <button class="calc-sci-btn" data-fn="fact">n!</button>
-            <button class="calc-sci-btn" data-fn="abs">|x|</button>
             <button class="calc-sci-btn" data-fn="1/x">1/x</button>
+            <button class="calc-sci-btn" data-fn="abs">|x|</button>
+            <button class="calc-sci-btn" data-fn="pi">π</button>
+            <button class="calc-sci-btn" data-fn="ee">EE</button>
+            <button class="calc-sci-btn" data-fn="mod">MOD</button>
+            <button class="calc-sci-btn" data-fn="ran">RAN</button>
         </div>
         <div class="calc-grid" id="calc-grid">
             <button class="calc-btn fn" data-val="C">C</button>
-            <button class="calc-btn fn" data-val="back">⌫</button>
-            <button class="calc-btn fn" data-val="%">%</button>
+            <button class="calc-btn fn" data-val="(">(</button>
+            <button class="calc-btn fn" data-val=")">)</button>
             <button class="calc-btn op" data-val="/">÷</button>
             <button class="calc-btn num" data-val="7">7</button>
             <button class="calc-btn num" data-val="8">8</button>
@@ -449,6 +465,7 @@
             <button class="calc-btn num" data-val="2">2</button>
             <button class="calc-btn num" data-val="3">3</button>
             <button class="calc-btn op" data-val="+">+</button>
+            <button class="calc-btn num" data-val="back">⌫</button>
             <button class="calc-btn num" data-val="0">0</button>
             <button class="calc-btn num" data-val=".">.</button>
             <button class="calc-btn eq" data-val="=">=</button>

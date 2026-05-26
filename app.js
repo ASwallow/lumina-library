@@ -2236,12 +2236,14 @@ function initFabGroup() {
 // ============================================================
 //  计算器
 // ============================================================
-const calc = { display: '0', prev: null, op: null, waiting: false, sci: false };
+// ============================================================
+//  计算器
+// ============================================================
+const calc = { expr: '', display: '0', sci: false, rad: false, justEval: false };
 
 function toggleCalc(group) {
     const panel = document.getElementById('calc-panel');
     if (panel.classList.contains('open')) { closeCalc(); return; }
-    // 定位到按钮组左侧
     const rect = group.getBoundingClientRect();
     panel.style.top = Math.max(8, rect.top - 40) + 'px';
     panel.style.left = Math.max(8, rect.left - 290) + 'px';
@@ -2251,67 +2253,241 @@ function toggleCalc(group) {
 
 function closeCalc() { document.getElementById('calc-panel').classList.remove('open'); }
 
-function calcInput(val) {
-    if (val === 'C') { calc.display = '0'; calc.prev = null; calc.op = null; calc.waiting = false; }
-    else if (val === 'back') { calc.display = calc.display.length > 1 ? calc.display.slice(0, -1) : '0'; }
-    else if (val === '=') { calcEvaluate(); }
-    else if ('+-*/%'.includes(val)) {
-        if (calc.prev !== null && calc.op && !calc.waiting) calcEvaluate();
-        calc.prev = parseFloat(calc.display); calc.op = val; calc.waiting = true;
-    }
-    else if (val === '.') { if (!calc.display.includes('.')) calc.display += '.'; }
-    else { calc.display = calc.waiting ? (calc.waiting = false, val) : calc.display === '0' ? val : calc.display + val; }
-    renderCalc();
+function renderCalc() {
+    const exprEl = document.querySelector('.calc-expr');
+    const resEl = document.querySelector('.calc-result');
+    if (exprEl) exprEl.textContent = calc.expr;
+    if (resEl) resEl.textContent = calc.display;
 }
 
-function calcEvaluate() {
-    if (calc.prev === null || !calc.op) return;
-    const cur = parseFloat(calc.display);
-    let r;
-    switch (calc.op) {
-        case '+': r = calc.prev + cur; break;
-        case '-': r = calc.prev - cur; break;
-        case '*': r = calc.prev * cur; break;
-        case '/': r = cur === 0 ? 'Error' : calc.prev / cur; break;
-        case '%': r = cur === 0 ? 'Error' : calc.prev % cur; break;
+function fmtNum(r) { return r === 'Error' ? 'Error' : parseFloat(r.toPrecision(12)).toString(); }
+
+function calcInput(val) {
+    if (val === 'C') {
+        calc.expr = ''; calc.display = '0'; calc.justEval = false;
+    } else if (val === 'back') {
+        if (!calc.expr) return;
+        calc.expr = calc.expr.slice(0, -1);
+        try { calc.display = fmtNum(evalCalcExpr(calc.expr || '0')); } catch(e) { calc.display = '...'; }
+    } else if (val === '=') {
+        try {
+            const r = evalCalcExpr(calc.expr);
+            calc.display = fmtNum(r);
+            calc.expr = calc.display;
+            calc.justEval = true;
+        } catch(e) { calc.display = 'Error'; calc.justEval = true; }
+    } else if ('+-*/'.includes(val)) {
+        calc.justEval = false;
+        calc.expr += val;
+    } else if (val === '.') {
+        if (calc.justEval) { calc.expr = '0'; calc.justEval = false; }
+        calc.expr += '.';
+    } else if (val === '(' || val === ')') {
+        if (calc.justEval && val === '(') { calc.expr = ''; calc.justEval = false; }
+        calc.expr += val;
+    } else {
+        // 数字
+        if (calc.justEval) { calc.expr = ''; calc.justEval = false; }
+        calc.expr += val;
+        // 实时预览结果
+        try { calc.display = fmtNum(evalCalcExpr(calc.expr)); } catch(e) { /* 表达式不完整，忽略 */ }
     }
-    calc.display = r === 'Error' ? 'Error' : parseFloat(r.toPrecision(12)).toString();
-    calc.prev = null; calc.op = null; calc.waiting = false;
+    renderCalc();
 }
 
 function calcSciFn(fn) {
     const v = parseFloat(calc.display);
     let r;
     switch (fn) {
-        case 'sin':  r = Math.sin(v * Math.PI / 180); break;
-        case 'cos':  r = Math.cos(v * Math.PI / 180); break;
-        case 'tan':  r = Math.tan(v * Math.PI / 180); break;
-        case 'asin': r = v < -1 || v > 1 ? 'Error' : Math.asin(v) * 180 / Math.PI; break;
-        case 'acos': r = v < -1 || v > 1 ? 'Error' : Math.acos(v) * 180 / Math.PI; break;
-        case 'atan': r = Math.atan(v) * 180 / Math.PI; break;
-        case 'log':  r = v <= 0 ? 'Error' : Math.log10(v); break;
-        case 'ln':   r = v <= 0 ? 'Error' : Math.log(v); break;
-        case 'sqrt': r = v < 0 ? 'Error' : Math.sqrt(v); break;
-        case 'pow':  calc.prev = v; calc.op = '**'; calc.waiting = true; return renderCalc();
-        case 'exp':  r = Math.exp(v); break;
-        case 'fact': r = v < 0 || v > 170 ? 'Error' : factorial(v); break;
-        case 'abs':  r = Math.abs(v); break;
-        case '1/x':  r = v === 0 ? 'Error' : 1 / v; break;
-        case 'pi':   r = Math.PI; break;
-        case 'e':    r = Math.E; break;
+        case 'sin':   r = Math.sin(calc.rad ? v : v * Math.PI / 180); break;
+        case 'cos':   r = Math.cos(calc.rad ? v : v * Math.PI / 180); break;
+        case 'tan':   r = Math.tan(calc.rad ? v : v * Math.PI / 180); break;
+        case 'asin':  r = v < -1 || v > 1 ? 'Error' : Math.asin(v) * (calc.rad ? 1 : 180 / Math.PI); break;
+        case 'acos':  r = v < -1 || v > 1 ? 'Error' : Math.acos(v) * (calc.rad ? 1 : 180 / Math.PI); break;
+        case 'atan':  r = Math.atan(v) * (calc.rad ? 1 : 180 / Math.PI); break;
+        case 'sinh':  r = Math.sinh(v); break;
+        case 'cosh':  r = Math.cosh(v); break;
+        case 'tanh':  r = Math.tanh(v); break;
+        case 'asinh': r = Math.asinh(v); break;
+        case 'acosh': r = v < 1 ? 'Error' : Math.acosh(v); break;
+        case 'atanh': r = v <= -1 || v >= 1 ? 'Error' : Math.atanh(v); break;
+        case 'log':   r = v <= 0 ? 'Error' : Math.log10(v); break;
+        case 'log2':  r = v <= 0 ? 'Error' : Math.log2(v); break;
+        case 'ln':    r = v <= 0 ? 'Error' : Math.log(v); break;
+        case 'exp':   r = Math.exp(v); break;
+        case 'sqrt':  r = v < 0 ? 'Error' : Math.sqrt(v); break;
+        case 'cbrt':  r = Math.cbrt(v); break;
+        case 'pow2':  r = v * v; break;
+        case 'pow3':  r = v * v * v; break;
+        case 'pow10': r = Math.pow(10, v); break;
+        case 'pow2x': r = Math.pow(2, v); break;
+        case 'fact':  r = v < 0 || v > 170 ? 'Error' : factorial(v); break;
+        case '1/x':   r = v === 0 ? 'Error' : 1 / v; break;
+        case 'abs':   r = Math.abs(v); break;
+        case 'pi':    r = Math.PI; break;
+        case 'ee':    calc.expr += 'e'; return renderCalc();
+        case 'mod':   calc.expr += '%'; return renderCalc();
+        case 'ran':   r = Math.random(); break;
         default: return;
     }
-    calc.display = r === 'Error' ? 'Error' : parseFloat(r.toPrecision(12)).toString();
-    calc.waiting = false; renderCalc();
+    const s = fmtNum(r);
+    calc.display = s;
+    calc.expr = s;
+    calc.justEval = true;
+    renderCalc();
 }
 
 function factorial(n) {
+    n = Math.round(n);
+    if (n < 0) return 'Error';
     if (n === 0 || n === 1) return 1;
+    if (n > 170) return Infinity;
     let r = 1; for (let i = 2; i <= n; i++) r *= i; return r;
 }
 
-function renderCalc() {
-    document.getElementById('calc-display').textContent = calc.display;
+// ============================================================
+//  科学计算器表达式解析器（支持括号和函数调用）
+// ============================================================
+function evalCalcExpr(expr) {
+    if (!expr || !expr.trim()) return 0;
+    const tokens = tokenize(expr);
+    let pos = 0;
+
+    function peek() { return pos < tokens.length ? tokens[pos] : null; }
+    function consume() { return tokens[pos++]; }
+
+    function parseExpr() {
+        let left = parseTerm();
+        while (peek() === '+' || peek() === '-') {
+            const op = consume();
+            const right = parseTerm();
+            left = op === '+' ? left + right : left - right;
+        }
+        return left;
+    }
+
+    function parseTerm() {
+        let left = parsePower();
+        while (peek() === '*' || peek() === '/' || peek() === '%') {
+            const op = consume();
+            const right = parsePower();
+            if (op === '*') left *= right;
+            else if (op === '/') { if (right === 0) throw 'Error'; left /= right; }
+            else { if (right === 0) throw 'Error'; left %= right; }
+        }
+        return left;
+    }
+
+    function parsePower() {
+        let left = parseUnary();
+        if (peek() === '^') { consume(); left = Math.pow(left, parseUnary()); }
+        return left;
+    }
+
+    function parseUnary() {
+        if (peek() === '-') { consume(); return -parseAtom(); }
+        if (peek() === '+') { consume(); return parseAtom(); }
+        return parseAtom();
+    }
+
+    function parseAtom() {
+        const t = peek();
+        if (t === '(') {
+            consume(); const v = parseExpr();
+            if (peek() === ')') consume();
+            return v;
+        }
+        if (t && /^[a-z]+$/i.test(t)) {
+            const fn = consume();
+            if (peek() === '(') {
+                consume(); const arg = parseExpr();
+                if (peek() === ')') consume();
+                return applyFn(fn, arg);
+            }
+            return applyFn(fn, parseAtom());
+        }
+        if (t && /^[\d.e]+$/i.test(t)) {
+            consume();
+            // 处理科学记数法
+            if (peek() === 'e' || peek() === 'E') {
+                const eChar = consume();
+                let expStr = '';
+                if (peek() === '-' || peek() === '+') expStr += consume();
+                if (peek() && /^\d+$/.test(peek())) expStr += consume();
+                return parseFloat(t + 'e' + expStr);
+            }
+            return parseFloat(t);
+        }
+        consume(); return 0;
+    }
+
+    function applyFn(fn, arg) {
+        switch (fn) {
+            case 'sin':   return Math.sin(calc.rad ? arg : arg * Math.PI / 180);
+            case 'cos':   return Math.cos(calc.rad ? arg : arg * Math.PI / 180);
+            case 'tan':   return Math.tan(calc.rad ? arg : arg * Math.PI / 180);
+            case 'asin':  return Math.asin(arg) * (calc.rad ? 1 : 180 / Math.PI);
+            case 'acos':  return Math.acos(arg) * (calc.rad ? 1 : 180 / Math.PI);
+            case 'atan':  return Math.atan(arg) * (calc.rad ? 1 : 180 / Math.PI);
+            case 'sinh':  return Math.sinh(arg);
+            case 'cosh':  return Math.cosh(arg);
+            case 'tanh':  return Math.tanh(arg);
+            case 'asinh': return Math.asinh(arg);
+            case 'acosh': return Math.acosh(arg);
+            case 'atanh': return Math.atanh(arg);
+            case 'log':   return Math.log10(arg);
+            case 'log2':  return Math.log2(arg);
+            case 'ln':    return Math.log(arg);
+            case 'exp':   return Math.exp(arg);
+            case 'sqrt':  return Math.sqrt(arg);
+            case 'cbrt':  return Math.cbrt(arg);
+            case 'abs':   return Math.abs(arg);
+            case 'fact':  return factorial(arg);
+            default: return arg;
+        }
+    }
+
+    const result = parseExpr();
+    if (typeof result === 'number' && !isFinite(result)) throw 'Error';
+    return result;
+}
+
+function tokenize(expr) {
+    const tokens = [];
+    let i = 0;
+    while (i < expr.length) {
+        const c = expr[i];
+        if (c === ' ') { i++; continue; }
+        if ('+-*/%^()'.includes(c)) {
+            // 处理负号：在运算符或开头后的负号是负号的一部分
+            if (c === '-' && (tokens.length === 0 || '+-*/%^('.includes(tokens[tokens.length - 1]))) {
+                let num = '-';
+                i++;
+                while (i < expr.length && (expr[i] >= '0' && expr[i] <= '9' || expr[i] === '.')) { num += expr[i]; i++; }
+                tokens.push(num);
+                continue;
+            }
+            tokens.push(c);
+            i++;
+        } else if ((c >= '0' && c <= '9') || c === '.') {
+            let num = '';
+            while (i < expr.length && ((expr[i] >= '0' && expr[i] <= '9') || expr[i] === '.')) { num += expr[i]; i++; }
+            // 科学记数法
+            if (i < expr.length && (expr[i] === 'e' || expr[i] === 'E')) {
+                num += expr[i]; i++;
+                if (i < expr.length && (expr[i] === '-' || expr[i] === '+')) { num += expr[i]; i++; }
+                while (i < expr.length && expr[i] >= '0' && expr[i] <= '9') { num += expr[i]; i++; }
+            }
+            tokens.push(num);
+        } else if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
+            let name = '';
+            while (i < expr.length && ((expr[i] >= 'a' && expr[i] <= 'z') || (expr[i] >= 'A' && expr[i] <= 'Z'))) { name += expr[i]; i++; }
+            tokens.push(name);
+        } else {
+            i++;
+        }
+    }
+    return tokens;
 }
 
 function initCalc() {
@@ -2330,10 +2506,15 @@ function initCalc() {
         b.addEventListener('click', () => {
             document.querySelectorAll('.calc-mode-btn').forEach(x => x.classList.remove('active'));
             b.classList.add('active');
-            const isSci = b.dataset.calcMode === 'scientific';
-            calc.sci = isSci;
-            document.getElementById('calc-sci').classList.toggle('hidden', !isSci);
+            calc.sci = b.dataset.calcMode === 'scientific';
+            document.getElementById('calc-sci').classList.toggle('hidden', !calc.sci);
         });
+    });
+    // Deg/Rad 切换
+    document.getElementById('calc-angle-btn').addEventListener('click', function() {
+        calc.rad = !calc.rad;
+        this.textContent = calc.rad ? 'Rad' : 'Deg';
+        this.classList.toggle('rad', calc.rad);
     });
     // 关闭按钮
     document.getElementById('btn-close-calc').addEventListener('click', closeCalc);
@@ -2344,17 +2525,6 @@ function initCalc() {
             closeCalc();
         }
     });
-    // ** 运算符（幂）
-    const origEval = calcEvaluate;
-    calcEvaluate = function() {
-        if (calc.prev !== null && calc.op === '**') {
-            const cur = parseFloat(calc.display);
-            calc.display = parseFloat(Math.pow(calc.prev, cur).toPrecision(12)).toString();
-            calc.prev = null; calc.op = null; calc.waiting = false;
-            return;
-        }
-        origEval();
-    };
 }
 
 // ============================================================
