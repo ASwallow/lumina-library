@@ -78,7 +78,7 @@ scrollObserver  // IntersectionObserver 实例
    - `src-tauri/tauri.conf.json` → `"version": "x.y.z"`
    - `package.json` → `"version": "x.y.z"`
 3. **重新打包** — 运行 `build.bat`
-4. **复制到 release/** — 每次做完更新，必须将安装包（`.nsis`）和应用（`.exe`）复制到 `proj_ebook/release/` 目录（产物来源：`src-tauri/target/release/bundle/nsis/`）。**即使只是更新 README 也要重新打包并更新 release/，确保 release/ 中的产物始终与最新代码一致。**
+4. **复制到 release/** — 每次做完更新，必须将安装包（`.nsis`）和应用（`.exe`）复制到 `proj_ebook/release/` 目录（产物来源：`src-tauri/target/release/bundle/nsis/`）。**即使只是更新 README 也要重新打包并更新 release/，确保 release/ 中的产物始终与最新代码一致。**上传 GitHub 时，release/ 中必须包含与当前版本号一致的最新安装包。
 5. **git commit + push**（包含 release/ 中的产物更新）
 
 ## 需求来源

@@ -2182,58 +2182,179 @@ function renderSearchResults(query) {
 }
 
 // ============================================================
-//  悬浮按钮拖动
+//  悬浮按钮组拖动 + 计算器
 // ============================================================
-function initFabDrag() {
-    const fab = document.getElementById('fab-search');
-    if (!fab) return;
-    let isDragging = false;
-    let hasMoved = false;
+function initFabGroup() {
+    const group = document.getElementById('fab-group');
+    if (!group) return;
+    let isDragging = false, hasMoved = false;
     let startX, startY, startLeft, startTop;
 
-    fab.addEventListener('mousedown', onDown);
-    fab.addEventListener('touchstart', onDown, { passive: false });
+    // 拖动整个组
+    group.addEventListener('mousedown', onDown);
+    group.addEventListener('touchstart', onDown, { passive: false });
 
     function onDown(e) {
         e.preventDefault();
-        isDragging = true;
-        hasMoved = false;
-        const point = e.touches ? e.touches[0] : e;
-        startX = point.clientX;
-        startY = point.clientY;
-        const rect = fab.getBoundingClientRect();
-        startLeft = rect.left;
-        startTop = rect.top;
-        fab.classList.add('dragging');
-
+        isDragging = true; hasMoved = false;
+        const pt = e.touches ? e.touches[0] : e;
+        startX = pt.clientX; startY = pt.clientY;
+        const rect = group.getBoundingClientRect();
+        startLeft = rect.left; startTop = rect.top;
+        group.classList.add('dragging');
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
         document.addEventListener('touchmove', onMove, { passive: false });
         document.addEventListener('touchend', onUp);
     }
-
     function onMove(e) {
         if (!isDragging) return;
         e.preventDefault();
-        const point = e.touches ? e.touches[0] : e;
-        const dx = point.clientX - startX;
-        const dy = point.clientY - startY;
+        const pt = e.touches ? e.touches[0] : e;
+        const dx = pt.clientX - startX, dy = pt.clientY - startY;
         if (Math.abs(dx) > 3 || Math.abs(dy) > 3) hasMoved = true;
-        fab.style.left = (startLeft + dx) + 'px';
-        fab.style.top = (startTop + dy) + 'px';
-        fab.style.right = 'auto';
-        fab.style.bottom = 'auto';
+        group.style.left = (startLeft + dx) + 'px';
+        group.style.top = (startTop + dy) + 'px';
+        group.style.right = 'auto'; group.style.bottom = 'auto';
     }
-
     function onUp() {
         isDragging = false;
-        fab.classList.remove('dragging');
+        group.classList.remove('dragging');
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
         document.removeEventListener('touchmove', onMove);
         document.removeEventListener('touchend', onUp);
-        if (!hasMoved) openSearch();
     }
+
+    // 各按钮点击（仅在未拖动时触发）
+    document.getElementById('fab-search').addEventListener('click', () => { if (!hasMoved) openSearch(); });
+    document.getElementById('fab-calc').addEventListener('click', () => { if (!hasMoved) toggleCalc(group); });
+    document.getElementById('fab-empty1').addEventListener('click', () => { if (!hasMoved) {} });
+    document.getElementById('fab-empty2').addEventListener('click', () => { if (!hasMoved) {} });
+}
+
+// ============================================================
+//  计算器
+// ============================================================
+const calc = { display: '0', prev: null, op: null, waiting: false, sci: false };
+
+function toggleCalc(group) {
+    const panel = document.getElementById('calc-panel');
+    if (panel.classList.contains('open')) { closeCalc(); return; }
+    // 定位到按钮组左侧
+    const rect = group.getBoundingClientRect();
+    panel.style.top = Math.max(8, rect.top - 40) + 'px';
+    panel.style.left = Math.max(8, rect.left - 290) + 'px';
+    panel.classList.add('open');
+    lucide.createIcons({ nodes: [panel] });
+}
+
+function closeCalc() { document.getElementById('calc-panel').classList.remove('open'); }
+
+function calcInput(val) {
+    if (val === 'C') { calc.display = '0'; calc.prev = null; calc.op = null; calc.waiting = false; }
+    else if (val === 'back') { calc.display = calc.display.length > 1 ? calc.display.slice(0, -1) : '0'; }
+    else if (val === '=') { calcEvaluate(); }
+    else if ('+-*/%'.includes(val)) {
+        if (calc.prev !== null && calc.op && !calc.waiting) calcEvaluate();
+        calc.prev = parseFloat(calc.display); calc.op = val; calc.waiting = true;
+    }
+    else if (val === '.') { if (!calc.display.includes('.')) calc.display += '.'; }
+    else { calc.display = calc.waiting ? (calc.waiting = false, val) : calc.display === '0' ? val : calc.display + val; }
+    renderCalc();
+}
+
+function calcEvaluate() {
+    if (calc.prev === null || !calc.op) return;
+    const cur = parseFloat(calc.display);
+    let r;
+    switch (calc.op) {
+        case '+': r = calc.prev + cur; break;
+        case '-': r = calc.prev - cur; break;
+        case '*': r = calc.prev * cur; break;
+        case '/': r = cur === 0 ? 'Error' : calc.prev / cur; break;
+        case '%': r = cur === 0 ? 'Error' : calc.prev % cur; break;
+    }
+    calc.display = r === 'Error' ? 'Error' : parseFloat(r.toPrecision(12)).toString();
+    calc.prev = null; calc.op = null; calc.waiting = false;
+}
+
+function calcSciFn(fn) {
+    const v = parseFloat(calc.display);
+    let r;
+    switch (fn) {
+        case 'sin':  r = Math.sin(v * Math.PI / 180); break;
+        case 'cos':  r = Math.cos(v * Math.PI / 180); break;
+        case 'tan':  r = Math.tan(v * Math.PI / 180); break;
+        case 'asin': r = v < -1 || v > 1 ? 'Error' : Math.asin(v) * 180 / Math.PI; break;
+        case 'acos': r = v < -1 || v > 1 ? 'Error' : Math.acos(v) * 180 / Math.PI; break;
+        case 'atan': r = Math.atan(v) * 180 / Math.PI; break;
+        case 'log':  r = v <= 0 ? 'Error' : Math.log10(v); break;
+        case 'ln':   r = v <= 0 ? 'Error' : Math.log(v); break;
+        case 'sqrt': r = v < 0 ? 'Error' : Math.sqrt(v); break;
+        case 'pow':  calc.prev = v; calc.op = '**'; calc.waiting = true; return renderCalc();
+        case 'exp':  r = Math.exp(v); break;
+        case 'fact': r = v < 0 || v > 170 ? 'Error' : factorial(v); break;
+        case 'abs':  r = Math.abs(v); break;
+        case '1/x':  r = v === 0 ? 'Error' : 1 / v; break;
+        case 'pi':   r = Math.PI; break;
+        case 'e':    r = Math.E; break;
+        default: return;
+    }
+    calc.display = r === 'Error' ? 'Error' : parseFloat(r.toPrecision(12)).toString();
+    calc.waiting = false; renderCalc();
+}
+
+function factorial(n) {
+    if (n === 0 || n === 1) return 1;
+    let r = 1; for (let i = 2; i <= n; i++) r *= i; return r;
+}
+
+function renderCalc() {
+    document.getElementById('calc-display').textContent = calc.display;
+}
+
+function initCalc() {
+    // 数字键盘
+    document.getElementById('calc-grid').addEventListener('click', (e) => {
+        const btn = e.target.closest('.calc-btn');
+        if (btn) calcInput(btn.dataset.val);
+    });
+    // 科学函数
+    document.getElementById('calc-sci').addEventListener('click', (e) => {
+        const btn = e.target.closest('.calc-sci-btn');
+        if (btn) calcSciFn(btn.dataset.fn);
+    });
+    // 模式切换
+    document.querySelectorAll('.calc-mode-btn').forEach(b => {
+        b.addEventListener('click', () => {
+            document.querySelectorAll('.calc-mode-btn').forEach(x => x.classList.remove('active'));
+            b.classList.add('active');
+            const isSci = b.dataset.calcMode === 'scientific';
+            calc.sci = isSci;
+            document.getElementById('calc-sci').classList.toggle('hidden', !isSci);
+        });
+    });
+    // 关闭按钮
+    document.getElementById('btn-close-calc').addEventListener('click', closeCalc);
+    // 面板外点击关闭
+    document.addEventListener('mousedown', (e) => {
+        const panel = document.getElementById('calc-panel');
+        if (panel.classList.contains('open') && !panel.contains(e.target) && !document.getElementById('fab-calc').contains(e.target)) {
+            closeCalc();
+        }
+    });
+    // ** 运算符（幂）
+    const origEval = calcEvaluate;
+    calcEvaluate = function() {
+        if (calc.prev !== null && calc.op === '**') {
+            const cur = parseFloat(calc.display);
+            calc.display = parseFloat(Math.pow(calc.prev, cur).toPrecision(12)).toString();
+            calc.prev = null; calc.op = null; calc.waiting = false;
+            return;
+        }
+        origEval();
+    };
 }
 
 // ============================================================
@@ -3617,8 +3738,9 @@ function bindEvents() {
         renderSearchResults(e.target.value);
     });
 
-    // 悬浮按钮拖动 + 点击搜索
-    initFabDrag();
+    // 悬浮按钮组拖动 + 计算器
+    initFabGroup();
+    initCalc();
 
     // 封面生成器
     document.getElementById('btn-close-cover-gen').addEventListener('click', closeCoverGen);

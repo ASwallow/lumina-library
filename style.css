@@ -1031,32 +1031,207 @@ body {
 .import-toast .spinner { width: 18px; height: 18px; border-width: 2px; }
 
 /* ============================================================
-   悬浮按钮
+   悬浮按钮组 (2×2 网格 + 四角星)
    ============================================================ */
-.fab {
+.fab-group {
     position: fixed; bottom: 28px; right: 28px; z-index: 50;
-    width: 56px; height: 56px; border-radius: 16px;
+    display: grid; grid-template-columns: 48px 48px; grid-template-rows: 48px 48px;
+    gap: 8px;
+    user-select: none; touch-action: none;
+}
+.fab-group.dragging { cursor: grabbing; }
+.fab-group.dragging .fab { transition: none; }
+.fab {
+    width: 48px; height: 48px; border-radius: 50%;
     border: 1px solid rgba(255,255,255,0.15);
     background: rgba(255,255,255,0.08);
     backdrop-filter: blur(24px) saturate(1.4);
     -webkit-backdrop-filter: blur(24px) saturate(1.4);
     color: var(--text-primary); cursor: pointer;
     display: flex; align-items: center; justify-content: center;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
-    transition: box-shadow 0.3s ease;
-    user-select: none; touch-action: none;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+    transition: box-shadow 0.3s ease, background 0.2s ease, transform 0.15s ease;
+    position: relative; z-index: 2;
 }
 body.light-theme .fab {
     background: rgba(0,0,0,0.06);
     border-color: rgba(0,0,0,0.12);
 }
-.fab svg { width: 22px; height: 22px; }
+.fab svg { width: 20px; height: 20px; }
 .fab:hover {
-    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
-    background: rgba(255,255,255,0.12);
+    box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    background: rgba(255,255,255,0.14);
+    transform: scale(1.08);
 }
 body.light-theme .fab:hover { background: rgba(0,0,0,0.1); }
-.fab.dragging { transition: none; cursor: grab; }
+.fab:active { transform: scale(0.95); }
+
+/* 四角星 — 居中于网格间隙 */
+.fab-star {
+    position: absolute;
+    top: 50%; left: 50%;
+    width: 14px; height: 14px;
+    transform: translate(-50%, -50%);
+    pointer-events: none; z-index: 3;
+}
+.fab-star::before,
+.fab-star::after {
+    content: ''; position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+}
+.fab-star::before {
+    width: 14px; height: 6px;
+    background: var(--accent);
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--accent);
+    opacity: 0.85;
+}
+.fab-star::after {
+    width: 6px; height: 14px;
+    background: var(--accent);
+    border-radius: 2px;
+    box-shadow: 0 0 8px var(--accent);
+    opacity: 0.85;
+}
+body.light-theme .fab-star::before,
+body.light-theme .fab-star::after {
+    opacity: 0.7;
+}
+
+/* ============================================================
+   计算器面板
+   ============================================================ */
+.calc-panel {
+    display: none;
+    position: fixed;
+    z-index: 55;
+    width: 280px;
+    background: rgba(30,30,40,0.92);
+    backdrop-filter: blur(24px) saturate(1.4);
+    -webkit-backdrop-filter: blur(24px) saturate(1.4);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 16px;
+    box-shadow: 0 12px 48px rgba(0,0,0,0.5);
+    overflow: hidden;
+    animation: calcSlideIn 0.2s ease-out;
+}
+.calc-panel.open { display: flex; flex-direction: column; }
+body.light-theme .calc-panel {
+    background: rgba(255,255,255,0.92);
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 12px 48px rgba(0,0,0,0.15);
+}
+@keyframes calcSlideIn {
+    from { opacity: 0; transform: translateY(8px) scale(0.96); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.calc-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 14px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    font-size: 13px; font-weight: 600;
+    color: var(--text-primary);
+}
+body.light-theme .calc-header { border-bottom-color: rgba(0,0,0,0.08); }
+.calc-header .btn-icon { color: var(--text-secondary); }
+
+.calc-mode-toggle {
+    display: flex; gap: 4px;
+    background: rgba(255,255,255,0.06);
+    border-radius: 8px; padding: 2px;
+}
+body.light-theme .calc-mode-toggle { background: rgba(0,0,0,0.06); }
+.calc-mode-btn {
+    padding: 3px 10px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-secondary);
+    font-size: 12px; cursor: pointer; transition: all 0.2s;
+}
+.calc-mode-btn.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.calc-display {
+    padding: 16px 18px;
+    font-size: 28px; font-weight: 300;
+    text-align: right;
+    color: var(--text-primary);
+    font-variant-numeric: tabular-nums;
+    min-height: 60px;
+    word-break: break-all;
+    line-height: 1.2;
+}
+
+/* 科学函数区 */
+.calc-sci {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 4px 10px 8px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+body.light-theme .calc-sci { border-top-color: rgba(0,0,0,0.06); }
+.calc-sci.hidden { display: none; }
+.calc-sci-btn {
+    padding: 6px 4px;
+    border: none; border-radius: 8px;
+    background: rgba(255,255,255,0.05);
+    color: var(--accent);
+    font-size: 12px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+}
+.calc-sci-btn:hover { background: rgba(255,255,255,0.1); }
+.calc-sci-btn:active { transform: scale(0.93); }
+body.light-theme .calc-sci-btn { background: rgba(0,0,0,0.04); }
+body.light-theme .calc-sci-btn:hover { background: rgba(0,0,0,0.08); }
+
+/* 数字键盘 */
+.calc-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    padding: 6px 10px 12px;
+}
+.calc-btn {
+    padding: 12px 4px;
+    border: none; border-radius: 10px;
+    font-size: 16px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, transform 0.1s;
+    background: rgba(255,255,255,0.06);
+    color: var(--text-primary);
+}
+.calc-btn.num:hover { background: rgba(255,255,255,0.12); }
+.calc-btn.num:active { transform: scale(0.93); }
+.calc-btn.fn {
+    background: rgba(255,255,255,0.1);
+    color: var(--text-secondary);
+    font-size: 14px;
+}
+.calc-btn.fn:hover { background: rgba(255,255,255,0.16); }
+.calc-btn.op {
+    background: rgba(129,140,248,0.2);
+    color: var(--accent);
+    font-size: 18px;
+}
+.calc-btn.op:hover { background: rgba(129,140,248,0.3); }
+.calc-btn.eq {
+    background: var(--accent);
+    color: #fff;
+    font-size: 18px; font-weight: 600;
+    grid-column: span 2;
+}
+.calc-btn.eq:hover { filter: brightness(1.1); }
+.calc-btn:active { transform: scale(0.93); }
+body.light-theme .calc-btn { background: rgba(0,0,0,0.04); }
+body.light-theme .calc-btn.num:hover { background: rgba(0,0,0,0.08); }
+body.light-theme .calc-btn.fn { background: rgba(0,0,0,0.06); }
+body.light-theme .calc-btn.fn:hover { background: rgba(0,0,0,0.1); }
+body.light-theme .calc-btn.op { background: rgba(99,102,241,0.12); }
+body.light-theme .calc-btn.op:hover { background: rgba(99,102,241,0.2); }
 
 /* ============================================================
    粒子
@@ -1099,8 +1274,12 @@ body.light-theme .fab:hover { background: rgba(0,0,0,0.1); }
     .stat-cards { grid-template-columns: 1fr; }
     .chart-grid { grid-template-columns: 1fr; }
 
-    .fab { bottom: 16px; right: 16px; width: 48px; height: 48px; }
-    .fab svg { width: 20px; height: 20px; }
+    .fab-group { bottom: 16px; right: 16px; grid-template-columns: 40px 40px; grid-template-rows: 40px 40px; gap: 6px; }
+    .fab { width: 40px; height: 40px; }
+    .fab svg { width: 18px; height: 18px; }
+    .fab-star::before { width: 12px; height: 5px; }
+    .fab-star::after  { width: 5px; height: 12px; }
+    .calc-panel { width: 260px; }
 
     .search-overlay { padding-top: 10vh; }
 
