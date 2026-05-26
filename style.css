@@ -74,11 +74,21 @@ body.light-theme {
 }
 
 body {
-    background: var(--bg-primary);
+    background: transparent;
     color: var(--text-primary);
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     overflow-x: hidden;
     transition: background 0.35s, color 0.35s;
+}
+/* 全局底色层，放在彭罗斯之上、内容之下 */
+body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: var(--bg-primary);
+    opacity: 0.85;
+    z-index: -1;
+    pointer-events: none;
 }
 
 /* 滚动条 */
@@ -867,6 +877,23 @@ body {
 .modal-actions { display: flex; gap: 8px; }
 .modal-actions .btn { flex: 1; justify-content: center; }
 
+/* 封面类型选择器 */
+.cover-type-selector {
+    display: flex; gap: 6px; margin-bottom: 16px;
+}
+.cover-type-btn {
+    flex: 1; padding: 10px 8px; border: 1px solid var(--border);
+    border-radius: 10px; background: var(--bg-surface);
+    color: var(--text-secondary); cursor: pointer; font-size: 13px;
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    transition: all 0.2s;
+}
+.cover-type-btn:hover { background: var(--accent-bg-hover); color: var(--text-primary); }
+.cover-type-btn.active {
+    background: var(--accent); border-color: var(--accent); color: #fff;
+}
+.cover-type-btn svg { width: 16px; height: 16px; }
+
 /* ============================================================
    每本书阅读时长表格
    ============================================================ */
@@ -1034,10 +1061,15 @@ body {
    悬浮按钮组 (2×2 网格 + 四角星)
    ============================================================ */
 .fab-group {
-    position: fixed; bottom: 28px; right: 28px; z-index: 50;
+    position: fixed; bottom: 28px; right: 28px; z-index: 180;
     display: grid; grid-template-columns: 48px 48px; grid-template-rows: 48px 48px;
     gap: 8px;
     user-select: none; touch-action: none;
+}
+.fab.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 .fab-group.dragging { cursor: grabbing; }
 .fab-group.dragging .fab { transition: none; }
@@ -1105,15 +1137,17 @@ body.light-theme .fab-star::after {
 .calc-panel {
     display: none;
     position: fixed;
-    z-index: 55;
+    z-index: 200;
     width: 280px;
+    max-height: calc(100vh - 16px);
     background: rgba(30,30,40,0.92);
     backdrop-filter: blur(24px) saturate(1.4);
     -webkit-backdrop-filter: blur(24px) saturate(1.4);
     border: 1px solid rgba(255,255,255,0.12);
     border-radius: 16px;
     box-shadow: 0 12px 48px rgba(0,0,0,0.5);
-    overflow: hidden;
+    overflow-y: auto;
+    overflow-x: hidden;
     animation: calcSlideIn 0.2s ease-out;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
 }
@@ -1619,6 +1653,7 @@ body.light-theme .calc-btn.op:hover { background: rgba(99,102,241,0.2); }
     position: fixed;
     top: 50%;
     left: 50%;
+    z-index: 0;
     pointer-events: none;
     opacity: var(--penrose-opacity);
     overflow: visible;
@@ -1640,15 +1675,32 @@ body.light-theme .calc-btn.op:hover { background: rgba(99,102,241,0.2); }
     max-width: 600px;
     margin: 40px auto;
     padding: 0 24px;
+    position: relative;
+    z-index: 1;
 }
 .settings-section {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 16px;
+    background: transparent;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 20px;
     padding: 20px 24px;
     margin-bottom: 20px;
-    backdrop-filter: blur(16px);
-    -webkit-backdrop-filter: blur(16px);
+    backdrop-filter: blur(20px) saturate(1.6);
+    -webkit-backdrop-filter: blur(20px) saturate(1.6);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.08), inset 0 0 0 1px rgba(255,255,255,0.03);
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.settings-section:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.12);
+    border-color: rgba(255,255,255,0.15);
+}
+body.light-theme .settings-section {
+    border-color: rgba(0,0,0,0.08);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.6);
+}
+body.light-theme .settings-section:hover {
+    box-shadow: 0 12px 40px rgba(0,0,0,0.1), inset 0 1px 0 rgba(255,255,255,0.8);
+    border-color: rgba(0,0,0,0.12);
 }
 .settings-section h3 {
     font-size: 15px;
@@ -1708,4 +1760,526 @@ body.light-theme .calc-btn.op:hover { background: rgba(99,102,241,0.2); }
     border-radius: 50%;
     background: var(--text-primary);
     opacity: 0.5;
+}
+
+/* ============================================================
+   笔记页
+   ============================================================ */
+#page-notes { min-height: 100vh; padding-top: 56px; }
+.notes-page-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 48px 0;
+}
+.notes-page-header .section-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.notes-page-actions {
+    display: flex;
+    gap: 8px;
+}
+.notes-grid-wrap {
+    padding: 20px 48px;
+}
+.notes-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px;
+}
+.note-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    cursor: pointer;
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    position: relative;
+    min-height: 140px;
+}
+.note-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+    border-color: var(--accent-bg-hover);
+}
+.note-card-title {
+    font-size: 15px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text-primary);
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.note-card-preview {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    line-height: 1.5;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.note-card-meta {
+    font-size: 11px;
+    color: var(--text-quaternary);
+    margin-top: 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.note-card-links {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+.note-card-links svg { width: 12px; height: 12px; }
+.note-card-links span { font-size: 11px; }
+.empty-notes {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 50vh;
+    gap: 16px;
+    opacity: 0.5;
+}
+.empty-notes svg { width: 64px; height: 64px; color: var(--text-quaternary); }
+.empty-notes p { color: var(--text-tertiary); font-size: 15px; }
+
+/* ============================================================
+   笔记编辑器
+   ============================================================ */
+.note-editor-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 160;
+    display: none;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+.note-editor-overlay.open {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.note-editor {
+    width: 90vw;
+    max-width: 1100px;
+    height: 85vh;
+    background: var(--bg-modal);
+    border: 1px solid var(--border-strong);
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.4);
+}
+.note-editor-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px 12px;
+    border-bottom: 1px solid var(--border);
+}
+.note-editor-title-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 20px;
+    font-weight: 600;
+    outline: none;
+    padding: 4px 0;
+}
+.note-editor-title-input::placeholder { color: var(--text-quaternary); }
+.note-editor-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+.note-editor-tabs {
+    display: flex;
+    gap: 0;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--border);
+}
+.note-editor-tabs .notes-tab {
+    padding: 10px 16px;
+    font-size: 13px;
+}
+.note-editor-body {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+}
+.note-edit-split {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+.note-editor-textarea {
+    flex: 1;
+    background: transparent;
+    border: none;
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.7;
+    padding: 16px 20px;
+    resize: none;
+    outline: none;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+}
+.note-editor-textarea::placeholder { color: var(--text-quaternary); }
+.note-editor-preview {
+    flex: 1;
+    padding: 16px 20px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-primary);
+    border-left: 1px solid var(--border);
+}
+.note-editor-preview h1, .note-editor-preview h2, .note-editor-preview h3 {
+    margin: 16px 0 8px;
+    font-weight: 600;
+}
+.note-editor-preview h1 { font-size: 20px; }
+.note-editor-preview h2 { font-size: 17px; }
+.note-editor-preview h3 { font-size: 15px; }
+.note-editor-preview p { margin-bottom: 8px; }
+.note-editor-preview code {
+    background: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+}
+.note-editor-preview pre {
+    background: var(--bg-surface);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 12px;
+}
+.note-editor-preview pre code { background: transparent; padding: 0; }
+.note-editor-preview blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    color: var(--text-secondary);
+    margin: 8px 0;
+}
+.note-editor-preview a { color: var(--accent); text-decoration: none; }
+.note-editor-preview a:hover { text-decoration: underline; }
+.note-editor-preview ul, .note-editor-preview ol { padding-left: 20px; margin-bottom: 8px; }
+.note-editor-preview li { margin-bottom: 4px; }
+/* 双链样式 */
+.note-editor-preview .wiki-link {
+    color: var(--accent);
+    cursor: pointer;
+    background: var(--accent-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    text-decoration: none;
+    transition: background 0.2s;
+}
+.note-editor-preview .wiki-link:hover {
+    background: var(--accent-bg-hover);
+}
+.note-preview-full {
+    flex: 1;
+    padding: 16px 20px;
+    overflow-y: auto;
+    font-size: 14px;
+    line-height: 1.7;
+}
+.note-editor-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 20px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
+    color: var(--text-tertiary);
+}
+.note-editor-footer-actions {
+    display: flex;
+    gap: 8px;
+}
+.btn-danger {
+    color: #ef4444;
+    border-color: rgba(239,68,68,0.3);
+}
+.btn-danger:hover {
+    background: rgba(239,68,68,0.1);
+}
+
+/* ============================================================
+   笔记关系图
+   ============================================================ */
+.graph-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 165;
+    display: none;
+    background: var(--bg-overlay);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.graph-overlay.open {
+    display: block;
+}
+.graph-toolbar {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 8px 16px;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+.graph-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+#graph-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+/* ============================================================
+   差分阅读器
+   ============================================================ */
+.diff-reader-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 150;
+    display: none;
+    background: var(--bg-reader);
+    flex-direction: column;
+}
+.diff-reader-overlay.open {
+    display: flex;
+}
+.diff-reader-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 16px;
+    background: var(--bg-reader-toolbar);
+    border-bottom: 1px solid var(--border);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    flex-shrink: 0;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+.diff-reader-toolbar-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.diff-reader-toolbar-right {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+.diff-reader-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    max-width: 200px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.diff-reader-label {
+    font-size: 12px;
+    color: var(--text-tertiary);
+    font-weight: 500;
+}
+.diff-reader-divider {
+    color: var(--text-quaternary);
+    margin: 0 4px;
+}
+.diff-page-info, .diff-zoom-info {
+    font-size: 12px;
+    color: var(--text-secondary);
+    min-width: 48px;
+    text-align: center;
+}
+.diff-reader-body {
+    flex: 1;
+    display: flex;
+    overflow: hidden;
+    position: relative;
+}
+.diff-panel {
+    flex: 1;
+    overflow: auto;
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 16px;
+    background: var(--bg-reader);
+}
+.diff-panel-divider {
+    width: 4px;
+    background: var(--border-strong);
+    cursor: col-resize;
+    flex-shrink: 0;
+    transition: background 0.2s;
+}
+.diff-panel-divider:hover {
+    background: var(--accent);
+}
+.diff-panel canvas {
+    box-shadow: var(--shadow-canvas);
+    border-radius: 4px;
+    display: block;
+}
+/* 差分阅读中的笔记渲染 */
+.diff-panel .diff-note-content {
+    width: 100%;
+    max-width: 700px;
+    padding: 20px;
+    font-size: 14px;
+    line-height: 1.7;
+    color: var(--text-primary);
+}
+.diff-panel .diff-note-content h1 { font-size: 20px; margin: 16px 0 8px; font-weight: 600; }
+.diff-panel .diff-note-content h2 { font-size: 17px; margin: 14px 0 6px; font-weight: 600; }
+.diff-panel .diff-note-content h3 { font-size: 15px; margin: 12px 0 4px; font-weight: 600; }
+.diff-panel .diff-note-content p { margin-bottom: 8px; }
+.diff-panel .diff-note-content code {
+    background: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.diff-panel .diff-note-content pre {
+    background: var(--bg-surface);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 12px;
+}
+.diff-panel .diff-note-content blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    color: var(--text-secondary);
+    margin: 8px 0;
+}
+/* 差分阅读中的笔记编辑 */
+.diff-note-textarea::placeholder { color: var(--text-quaternary); }
+.diff-note-preview h1, .diff-note-preview h2, .diff-note-preview h3 {
+    margin: 16px 0 8px; font-weight: 600;
+}
+.diff-note-preview h1 { font-size: 20px; }
+.diff-note-preview h2 { font-size: 17px; }
+.diff-note-preview h3 { font-size: 15px; }
+.diff-note-preview p { margin-bottom: 8px; }
+.diff-note-preview code {
+    background: var(--bg-surface);
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+.diff-note-preview pre {
+    background: var(--bg-surface);
+    padding: 12px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 12px;
+}
+.diff-note-preview blockquote {
+    border-left: 3px solid var(--accent);
+    padding-left: 12px;
+    color: var(--text-secondary);
+    margin: 8px 0;
+}
+.diff-note-preview ul, .diff-note-preview ol { padding-left: 20px; margin-bottom: 8px; }
+.diff-note-preview li { margin-bottom: 4px; }
+
+/* ============================================================
+   图设置色块
+   ============================================================ */
+.graph-color-picks {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.graph-color-swatch {
+    width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    cursor: pointer;
+    border: 2px solid transparent;
+    transition: transform 0.2s, border-color 0.2s;
+}
+.graph-color-swatch:hover { transform: scale(1.15); }
+.graph-color-swatch.active { border-color: var(--text-primary); }
+
+/* ============================================================
+   Markdown 自动补全
+   ============================================================ */
+.md-autocomplete {
+    position: absolute;
+    z-index: 300;
+    background: var(--bg-modal);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    min-width: 220px;
+    max-height: 240px;
+    overflow-y: auto;
+    padding: 4px;
+    display: none;
+}
+.md-autocomplete.show { display: block; }
+.md-ac-item {
+    padding: 8px 12px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.12s;
+}
+.md-ac-item:hover, .md-ac-item.active {
+    background: var(--accent-bg);
+}
+.md-ac-item .ac-label {
+    font-weight: 500;
+}
+.md-ac-item .ac-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-left: auto;
+}
+.md-ac-item code {
+    background: var(--bg-surface);
+    padding: 1px 5px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
 }

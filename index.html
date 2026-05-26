@@ -38,6 +38,9 @@
             <button class="nav-item" data-tab="papers">
                 <i data-lucide="file-text"></i> 论文
             </button>
+            <button class="nav-item" data-tab="notes">
+                <i data-lucide="sticky-note"></i> 笔记
+            </button>
             <button class="nav-item" data-tab="dashboard">
                 <i data-lucide="bar-chart-3"></i> 统计
             </button>
@@ -77,6 +80,22 @@
             </button>
         </div>
         <div id="papers-container" class="papers-grid-wrap"></div>
+    </main>
+
+    <!-- 笔记页 -->
+    <main id="page-notes" class="hidden">
+        <div class="notes-page-header">
+            <h2 class="section-title"><i data-lucide="sticky-note"></i> 笔记</h2>
+            <div class="notes-page-actions">
+                <button class="btn btn-primary" id="btn-new-note">
+                    <i data-lucide="plus"></i> 新建笔记
+                </button>
+                <button class="btn" id="btn-open-graph" title="查看笔记关系图">
+                    <i data-lucide="git-branch"></i> 关系图
+                </button>
+            </div>
+        </div>
+        <div id="notes-container" class="notes-grid-wrap"></div>
     </main>
 
     <!-- 统计页 -->
@@ -170,6 +189,32 @@
                     <div class="color-picks" id="light-color-picks"></div>
                 </div>
             </div>
+            <div class="settings-section">
+                <h3><i data-lucide="git-branch"></i> 笔记关系图</h3>
+                <div class="settings-row">
+                    <label>节点大小</label>
+                    <input type="range" id="graph-node-size-slider" min="4" max="24" step="1" value="10">
+                    <span class="settings-value" id="graph-node-size-value">10</span>
+                </div>
+                <div class="settings-row">
+                    <label>节点颜色</label>
+                    <div class="graph-color-picks" id="graph-color-picks"></div>
+                </div>
+                <div class="settings-row">
+                    <label>斥力强度</label>
+                    <input type="range" id="graph-repulsion-slider" min="500" max="5000" step="100" value="2000">
+                    <span class="settings-value" id="graph-repulsion-value">2000</span>
+                </div>
+                <div class="settings-row">
+                    <label>连线粗细</label>
+                    <input type="range" id="graph-edge-width-slider" min="1" max="8" step="0.5" value="2.5">
+                    <span class="settings-value" id="graph-edge-width-value">2.5</span>
+                </div>
+                <div class="settings-row">
+                    <label>连线颜色</label>
+                    <div class="graph-color-picks" id="graph-edge-color-picks"></div>
+                </div>
+            </div>
         </div>
     </main>
 
@@ -214,6 +259,9 @@
                 </button>
                 <button class="btn paper-only-btn hidden" id="btn-highlight" title="高亮标注">
                     <i data-lucide="highlighter"></i>
+                </button>
+                <button class="btn" id="btn-diff-read" title="差分阅读">
+                    <i data-lucide="columns-2"></i>
                 </button>
                 <button class="btn" id="btn-prev-page">
                     <i data-lucide="chevron-left"></i>
@@ -374,6 +422,17 @@
                     <i data-lucide="x"></i>
                 </button>
             </div>
+            <div class="cover-type-selector">
+                <button class="cover-type-btn active" data-cover-type="knot">
+                    <i data-lucide="link"></i> 纽结
+                </button>
+                <button class="cover-type-btn" data-cover-type="topology">
+                    <i data-lucide="orbit"></i> 拓扑
+                </button>
+                <button class="cover-type-btn" data-cover-type="geometry">
+                    <i data-lucide="pentagon"></i> 几何
+                </button>
+            </div>
             <div class="cover-canvas-wrap">
                 <canvas id="cover-canvas" width="300" height="440"></canvas>
             </div>
@@ -383,6 +442,103 @@
                 </button>
                 <button class="btn btn-primary" id="btn-apply-cover">应用封面</button>
             </div>
+        </div>
+    </div>
+
+    <!-- 笔记编辑器弹层 -->
+    <div class="note-editor-overlay" id="note-editor-overlay">
+        <div class="note-editor">
+            <div class="note-editor-header">
+                <input type="text" id="note-editor-title" class="note-editor-title-input" placeholder="笔记标题...">
+                <div class="note-editor-actions">
+                    <button class="btn btn-sm" id="btn-note-diff-read" title="与PDF差分阅读">
+                        <i data-lucide="columns-2"></i> 差分阅读
+                    </button>
+                    <button class="btn-icon" id="btn-close-note-editor">
+                        <i data-lucide="x"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="note-editor-tabs">
+                <button class="notes-tab active" data-note-editor-tab="edit">编辑</button>
+                <button class="notes-tab" data-note-editor-tab="preview">预览</button>
+                <button class="notes-tab" data-note-editor-tab="draw">手写</button>
+            </div>
+            <div class="note-editor-body">
+                <div id="note-edit-wrap" class="note-edit-split">
+                    <textarea id="note-editor-textarea" class="note-editor-textarea" placeholder="支持 Markdown 语法...&#10;使用 [[笔记名]] 创建双链"></textarea>
+                    <div class="notes-edit-divider"></div>
+                    <div id="note-editor-preview" class="note-editor-preview"></div>
+                </div>
+                <div id="note-preview-full" class="note-preview-full hidden"></div>
+                <div id="note-draw-wrap" class="notes-draw hidden">
+                    <canvas id="note-draw-canvas"></canvas>
+                    <div class="draw-actions">
+                        <button class="btn btn-sm" id="btn-note-undo-draw">
+                            <i data-lucide="undo-2"></i> 撤销
+                        </button>
+                        <button class="btn btn-sm" id="btn-note-clear-draw">
+                            <i data-lucide="trash-2"></i> 清除
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="note-editor-footer">
+                <span class="note-editor-meta" id="note-editor-meta"></span>
+                <div class="note-editor-footer-actions">
+                    <button class="btn btn-sm" id="btn-export-note-md" title="导出为 Markdown">
+                        <i data-lucide="file-down"></i> 导出 .md
+                    </button>
+                    <button class="btn btn-sm btn-danger" id="btn-delete-note" title="删除笔记">
+                        <i data-lucide="trash-2"></i> 删除
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 笔记关系图弹层 -->
+    <div class="graph-overlay" id="graph-overlay">
+        <div class="graph-toolbar">
+            <button class="btn-icon" id="btn-close-graph" title="关闭">
+                <i data-lucide="x"></i>
+            </button>
+            <span class="graph-title">笔记关系图</span>
+        </div>
+        <canvas id="graph-canvas"></canvas>
+    </div>
+
+    <!-- 差分阅读器 -->
+    <div class="diff-reader-overlay" id="diff-reader-overlay">
+        <div class="diff-reader-toolbar">
+            <div class="diff-reader-toolbar-left">
+                <button class="btn" id="btn-close-diff-reader">
+                    <i data-lucide="arrow-left"></i> 返回
+                </button>
+                <span class="diff-reader-title" id="diff-reader-title"></span>
+            </div>
+            <div class="diff-reader-toolbar-right">
+                <span class="diff-reader-label">左侧面板</span>
+                <button class="btn" id="diff-left-prev"><i data-lucide="chevron-left"></i></button>
+                <span class="diff-page-info" id="diff-left-page">1 / 1</span>
+                <button class="btn" id="diff-left-next"><i data-lucide="chevron-right"></i></button>
+                <button class="btn" id="diff-left-zoom-out"><i data-lucide="minus"></i></button>
+                <span class="diff-zoom-info" id="diff-left-zoom">100%</span>
+                <button class="btn" id="diff-left-zoom-in"><i data-lucide="plus"></i></button>
+                <span class="diff-reader-divider">|</span>
+                <span class="diff-reader-label">右侧面板</span>
+                <button class="btn" id="diff-right-prev"><i data-lucide="chevron-left"></i></button>
+                <span class="diff-page-info" id="diff-right-page">1 / 1</span>
+                <button class="btn" id="diff-right-next"><i data-lucide="chevron-right"></i></button>
+                <button class="btn" id="diff-right-zoom-out"><i data-lucide="minus"></i></button>
+                <span class="diff-zoom-info" id="diff-right-zoom">100%</span>
+                <button class="btn" id="diff-right-zoom-in"><i data-lucide="plus"></i></button>
+            </div>
+        </div>
+        <div class="diff-reader-body">
+            <div class="diff-panel diff-panel-left" id="diff-panel-left"></div>
+            <div class="diff-panel-divider" id="diff-panel-divider"></div>
+            <div class="diff-panel diff-panel-right" id="diff-panel-right"></div>
         </div>
     </div>
 

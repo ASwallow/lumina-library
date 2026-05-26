@@ -77,13 +77,23 @@ scrollObserver  // IntersectionObserver 实例
 2. **版本号 +1** — 第三位版本号（patch）加一，需同时更新以下位置：
    - `src-tauri/tauri.conf.json` → `"version": "x.y.z"`
    - `package.json` → `"version": "x.y.z"`
+   - `src-tauri/Cargo.toml` → `version = "x.y.z"`
 3. **重新打包** — 运行 `build.bat`
-4. **复制到 release/** — 每次做完更新，必须将安装包（`.nsis`）和应用（`.exe`）复制到 `proj_ebook/release/` 目录（产物来源：`src-tauri/target/release/bundle/nsis/`）。**即使只是更新 README 也要重新打包并更新 release/，确保 release/ 中的产物始终与最新代码一致。**上传 GitHub 时，release/ 中必须包含与当前版本号一致的最新安装包。
+4. **复制到 release/** — 每次做完更新，必须将安装包（`.nsis`）和应用（`.exe`）复制到 `proj_ebook/release/` 目录（产物来源：`src-tauri/target/release/bundle/nsis/`）。**即使只是更新 README 也要重新打包并更新 release/，确保 release/ 中的产物始终与最新代码一致。**
 5. **git commit + push**（包含 release/ 中的产物更新）
+6. **上传 GitHub Release** — 使用 `gh release create v<版本号>` 将安装包和 exe 上传到 GitHub Releases 页面（`https://github.com/ASwallow/yread-lib/releases`），而非仅放在仓库的 release/ 目录中。
+
+## Git 规范
+
+- **commit 不加 Co-Authored-By**，使用用户自己的账号提交
 
 ## 需求来源
 
 - **README.md 的 `## TODO` 列表中的条目等同于正式需求**，每次开发会话应优先处理 TODO 中的项目，完成后从 TODO 中移除并写入更新日志。
+
+## 需求追踪规则
+
+用户的所有需求在第一次提出时写入 `README.md` 的 `## TODO` 列表。在 commit 时如果需求尚未解决，则一并写入 README 提交。当用户确认需求已解决时，从 TODO 中删除并作为更新条目写入 `## 更新日志`。
 
 ## 常见陷阱
 

@@ -79,10 +79,23 @@ let currentNotesTab = 'write';
 let papers = [];               // [{ id, name, cover, coverColor, tags, status, addedAt, pageCount, fileSize, author, journal, year, doi, url, notes, description, highlights: [{page,x,y,w,h}], _pdfUint8 }]
 let activePaperTagFilter = '全部';
 let activePaperStatusFilter = '全部';
-let currentTab = 'shelf';      // shelf | papers | dashboard
+let currentTab = 'shelf';      // shelf | papers | dashboard | notes
 let isPaperReader = false;     // 当前阅读器是否在读论文
 let highlightMode = false;     // 高亮标注模式
 let selectedHighlight = null;
+
+// 独立笔记状态
+let standaloneNotes = [];      // [{ id, title, content, drawing, links: [noteId], createdAt, updatedAt }]
+let currentEditNoteId = null;  // 当前编辑的笔记ID
+let noteEditorSignaturePad = null;
+let noteEditorSaveTimer = null;
+let currentNoteEditorTab = 'edit';
+
+// 差分阅读状态
+let diffState = null;          // { left: {pdfDoc,currentPage,totalPages,zoom,type,noteId}, right: {...} }
+
+// 关系图状态
+let graphAnimFrame = null;
 
 const DEFAULT_PAPER_TAGS = ['计算机', '数学', '物理', '工程', '经济', '生物', '医学', '社科', '其他'];
 const READING_STATUS = { unread: '未读', reading: '在读', finished: '已读', reread: '重读' };
@@ -128,6 +141,8 @@ async function loadState() {
     } catch (e) {
         console.error('[Lumina] 加载失败:', e);
     }
+    // 加载独立笔记（在 try-catch 外，避免影响主加载）
+    await loadStandaloneNotes();
 }
 
 // ============================================================
@@ -248,6 +263,21 @@ async function loadPaperPdfData(paperId) {
     return arrayToUint8(raw);
 }
 
+// ---- 独立笔记持久化 ----
+async function loadStandaloneNotes() {
+    try {
+        const saved = await localforage.getItem('standaloneNotes');
+        if (saved && Array.isArray(saved)) standaloneNotes = saved;
+        console.log('[Lumina] 加载独立笔记:', standaloneNotes.length, '条');
+    } catch (e) {
+        console.error('[Lumina] 加载独立笔记失败:', e);
+    }
+}
+
+async function saveStandaloneNotes() {
+    await localforage.setItem('standaloneNotes', standaloneNotes);
+}
+
 // ============================================================
 //  工具函数
 // ============================================================
@@ -302,18 +332,23 @@ function switchTab(tab) {
     );
     document.getElementById('page-shelf').classList.toggle('hidden', tab !== 'shelf');
     document.getElementById('page-papers').classList.toggle('hidden', tab !== 'papers');
+    document.getElementById('page-notes').classList.toggle('hidden', tab !== 'notes');
     document.getElementById('page-dashboard').classList.toggle('hidden', tab !== 'dashboard');
     document.getElementById('page-settings').classList.toggle('hidden', tab !== 'settings');
     // 更新导入按钮标签和可见性
     const importBtn = document.getElementById('import-btn');
-    if (tab === 'settings') {
+    if (tab === 'settings' || tab === 'notes') {
         importBtn.style.display = 'none';
     } else {
         importBtn.style.display = '';
         document.getElementById('import-btn-label').textContent = tab === 'papers' ? '导入论文' : '批量导入';
     }
+    // 设置和统计页隐藏四宫格
+    document.getElementById('fab-group').style.display = (tab === 'settings' || tab === 'dashboard') ? 'none' : '';
     if (tab === 'papers') {
         renderPapersShelf();
+    } else if (tab === 'notes') {
+        renderNotesPage();
     } else if (tab === 'dashboard') {
         try { renderDashboard(); } catch (e) {
             console.error('[Lumina] 统计渲染失败:', e);
@@ -2227,10 +2262,21 @@ function initFabGroup() {
     }
 
     // 各按钮点击（仅在未拖动时触发）
-    document.getElementById('fab-search').addEventListener('click', () => { if (!hasMoved) openSearch(); });
+    document.getElementById('fab-search').addEventListener('click', () => {
+        if (!hasMoved && !document.getElementById('reader-overlay').classList.contains('open')) openSearch();
+    });
     document.getElementById('fab-calc').addEventListener('click', () => { if (!hasMoved) toggleCalc(group); });
     document.getElementById('fab-empty1').addEventListener('click', () => { if (!hasMoved) {} });
     document.getElementById('fab-empty2').addEventListener('click', () => { if (!hasMoved) {} });
+
+    // 监听阅读器状态，动态禁用搜索按钮
+    const searchFab = document.getElementById('fab-search');
+    const observer = new MutationObserver(() => {
+        const inReader = document.getElementById('reader-overlay').classList.contains('open');
+        searchFab.classList.toggle('disabled', inReader);
+        searchFab.title = inReader ? '阅读中不可用' : '搜索书籍';
+    });
+    observer.observe(document.getElementById('reader-overlay'), { attributes: true, attributeFilter: ['class'] });
 }
 
 // ============================================================
@@ -2245,13 +2291,41 @@ function toggleCalc(group) {
     const panel = document.getElementById('calc-panel');
     if (panel.classList.contains('open')) { closeCalc(); return; }
     const rect = group.getBoundingClientRect();
-    panel.style.top = Math.max(8, rect.top - 40) + 'px';
-    panel.style.left = Math.max(8, rect.left - 290) + 'px';
+    // 先显示以获取实际尺寸
     panel.classList.add('open');
     lucide.createIcons({ nodes: [panel] });
+    // 计算位置，确保不超出视口
+    const panelH = panel.offsetHeight;
+    const panelW = panel.offsetWidth;
+    let top = rect.top - 40;
+    let left = rect.left - panelW - 8;
+    // 如果上方放不下，往下移
+    if (top + panelH > window.innerHeight - 8) top = window.innerHeight - panelH - 8;
+    if (top < 8) top = 8;
+    // 如果左侧放不下，放到右侧
+    if (left < 8) left = rect.right + 8;
+    if (left + panelW > window.innerWidth - 8) left = window.innerWidth - panelW - 8;
+    panel.style.top = top + 'px';
+    panel.style.left = left + 'px';
 }
 
 function closeCalc() { document.getElementById('calc-panel').classList.remove('open'); }
+
+function clampCalcPosition() {
+    const panel = document.getElementById('calc-panel');
+    if (!panel.classList.contains('open')) return;
+    const panelH = panel.offsetHeight;
+    const panelW = panel.offsetWidth;
+    let top = parseInt(panel.style.top) || 0;
+    let left = parseInt(panel.style.left) || 0;
+    // 确保不超出视口底部
+    if (top + panelH > window.innerHeight - 8) top = window.innerHeight - panelH - 8;
+    if (top < 8) top = 8;
+    if (left < 8) left = 8;
+    if (left + panelW > window.innerWidth - 8) left = window.innerWidth - panelW - 8;
+    panel.style.top = top + 'px';
+    panel.style.left = left + 'px';
+}
 
 function renderCalc() {
     const exprEl = document.querySelector('.calc-expr');
@@ -2508,6 +2582,8 @@ function initCalc() {
             b.classList.add('active');
             calc.sci = b.dataset.calcMode === 'scientific';
             document.getElementById('calc-sci').classList.toggle('hidden', !calc.sci);
+            // 切换后重新定位，防止溢出
+            clampCalcPosition();
         });
     });
     // Deg/Rad 切换
@@ -2548,7 +2624,7 @@ function generateArtCover() {
     const ctx = canvas.getContext('2d');
     const W = 300, H = 440;
 
-    // 以书名为种子的确定性 PRNG（mulberry32）
+    // 以书名 + 时间为种子的确定性 PRNG（mulberry32）
     function seedHash(str) {
         let h = 0;
         for (let i = 0; i < str.length; i++) {
@@ -2567,88 +2643,100 @@ function generateArtCover() {
     function srandRange(a, b) { return a + srand() * (b - a); }
     function srandInt(a, b) { return Math.floor(srandRange(a, b + 1)); }
 
-    const style = srand() > 0.5 ? 0 : 1; // 0=纽结投影, 1=点阵迭代
+    // 获取当前选择的类型
+    const activeType = document.querySelector('.cover-type-btn.active');
+    const coverType = activeType ? activeType.dataset.coverType : 'knot';
 
-    ctx.fillStyle = '#f8f6f0';
+    // ---- 琼斯多项式种子生成 ----
+    // 用书名种子生成伪琼斯多项式参数，决定纽结的交叉数、拧数等
+    function jonesPolynomialSeed() {
+        let h = _seed;
+        // 琼斯多项式 V(t) = Σ a_i * t^i，生成系数
+        const crossings = 3 + (h % 12); // 3~14 交叉数
+        h = (h * 1103515245 + 12345) & 0x7fffffff;
+        const writhe = (h % (crossings * 2 + 1)) - crossings; // 拧数
+        h = (h * 1103515245 + 12345) & 0x7fffffff;
+        const numComponents = 1 + (h % 3); // 1~3 分量数
+        h = (h * 1103515245 + 12345) & 0x7fffffff;
+        // 琼斯多项式系数（用于确定曲线参数）
+        const coeffs = [];
+        for (let i = 0; i < 6; i++) {
+            h = (h * 1103515245 + 12345) & 0x7fffffff;
+            coeffs.push((h % 200 - 100) / 100); // -1 到 1
+        }
+        return { crossings, writhe, numComponents, coeffs };
+    }
+
+    const jp = jonesPolynomialSeed();
+
+    // ---- 调色板 ----
+    function getPalette() {
+        const p = srandInt(0, 4);
+        const palettes = [
+            { bg: '#f8f6f0', colors: ['#2a2a2a', '#555', '#888'] },
+            { bg: '#0f0f1a', colors: ['#818cf8', '#c084fc', '#67e8f9'] },
+            { bg: '#1a0f0f', colors: ['#fb7185', '#f59e0b', '#ef4444'] },
+            { bg: '#0f1a0f', colors: ['#34d399', '#10b981', '#6ee7b7'] },
+            { bg: '#f0f0ff', colors: ['#312e81', '#4f46e5', '#6366f1'] },
+        ];
+        return palettes[p];
+    }
+    const palette = getPalette();
+
+    ctx.fillStyle = palette.bg;
     ctx.fillRect(0, 0, W, H);
 
-    if (style === 0) {
-        // ---- 复杂纽结平面投影 ----
-        const knotType = srandInt(0, 7);
+    if (coverType === 'knot') {
+        // ---- 纽结类型：用琼斯多项式参数生成复杂纽结投影 ----
+        const knotType = jp.crossings % 10;
 
         function knotPoint(t) {
             let x, y;
-            if (knotType === 0) {
-                // 三叶结
-                x = Math.sin(t) + 2 * Math.sin(2 * t);
-                y = Math.cos(t) - 2 * Math.cos(2 * t);
-            } else if (knotType === 1) {
-                // 八字结
-                x = (2 + Math.cos(2 * t)) * Math.cos(3 * t);
-                y = (2 + Math.cos(2 * t)) * Math.sin(3 * t);
-            } else if (knotType === 2) {
-                // Torus(2,3)
-                const r = 2 + Math.cos(3 * t / 2);
+            const c0 = jp.coeffs[0], c1 = jp.coeffs[1], c2 = jp.coeffs[2];
+            if (knotType === 0 || knotType === 1) {
+                // 三叶结变体（Jones V(t) = t + t^3 - t^4）
+                const p = 2 + c0;
+                x = Math.sin(t) + p * Math.sin(2 * t);
+                y = Math.cos(t) - p * Math.cos(2 * t);
+            } else if (knotType === 2 || knotType === 3) {
+                // 八字结变体（Jones V(t) = t^2 - t + 2 - t^{-1} + t^{-2}）
+                x = (2 + Math.cos(2 * t + c1)) * Math.cos(3 * t);
+                y = (2 + Math.cos(2 * t + c1)) * Math.sin(3 * t);
+            } else if (knotType === 4 || knotType === 5) {
+                // Torus(p,q) 纽结 —— p,q 由琼斯多项式交叉数决定
+                const p = 2 + (jp.crossings % 3);
+                const q = 3 + (jp.writhe + jp.crossings) % 5;
+                const r = 2 + Math.cos(q * t / p);
                 x = r * Math.cos(t);
                 y = r * Math.sin(t);
-            } else if (knotType === 3) {
-                // 五瓣结 Torus(2,5)
-                const r = 2 + Math.cos(5 * t / 2);
-                x = r * Math.cos(t);
-                y = r * Math.sin(t);
-            } else if (knotType === 4) {
-                // Torus(3,4)
-                const r = 2 + Math.cos(4 * t / 3);
-                x = r * Math.cos(t);
-                y = r * Math.sin(t);
-            } else if (knotType === 5) {
-                // Lissajous 结 (3,4)
-                x = 3 * Math.sin(3 * t + 0.5);
-                y = 3 * Math.sin(4 * t);
-            } else if (knotType === 6) {
-                // 玫瑰线结
-                const k = 2.5;
+            } else if (knotType === 6 || knotType === 7) {
+                // Lissajous 纽结 —— 频率由琼斯多项式系数决定
+                const fx = 3 + Math.abs(Math.round(c0 * 3));
+                const fy = 4 + Math.abs(Math.round(c1 * 2));
+                const phase = c2 * Math.PI;
+                x = 3 * Math.sin(fx * t + phase);
+                y = 3 * Math.sin(fy * t);
+            } else {
+                // 玫瑰线纽结 —— k 由琼斯多项式分量数决定
+                const k = 2 + jp.numComponents * 0.5;
                 const R = 2.5 * Math.cos(k * t);
                 x = R * Math.cos(t);
                 y = R * Math.sin(t);
-            } else {
-                // 扭曲环面 Torus(4,5)
-                const r = 2 + Math.cos(5 * t / 4);
-                x = r * Math.cos(t);
-                y = r * Math.sin(t);
             }
             return [x, y];
         }
 
-        // 参数 c 用书名种子迭代 50 次
+        // logistic map 混沌参数
         let c = (_seed % 1000) / 1000;
-        for (let i = 0; i < 50; i++) {
-            c = 3.9 * c * (1 - c); // logistic map
-        }
+        for (let i = 0; i < 50; i++) c = 3.9 * c * (1 - c);
 
-        const numStrands = srandInt(1, 3);
-        const lineStyles = ['solid', 'dashed', 'dotted'];
-        const strandStyle = lineStyles[srandInt(0, 2)];
-        const paletteChoice = srandInt(0, 2);
-
-        // 灰度或单色调色板
-        let baseColor;
-        if (paletteChoice === 0) {
-            baseColor = null; // 灰度模式
-        } else if (paletteChoice === 1) {
-            const hues = ['#3b82f6', '#6366f1', '#8b5cf6', '#0ea5e9', '#14b8a6'];
-            baseColor = hues[srandInt(0, hues.length - 1)];
-        } else {
-            const hues = ['#ef4444', '#f59e0b', '#10b981', '#ec4899', '#f97316'];
-            baseColor = hues[srandInt(0, hues.length - 1)];
-        }
-
+        const numStrands = jp.numComponents;
         const scale = 55 + c * 35;
         const cx = W / 2, cy = H / 2 - 80;
 
         for (let s = 0; s < numStrands; s++) {
             const offset = s * 0.15;
-            const steps = 1200;
+            const steps = 1500;
             ctx.beginPath();
             for (let i = 0; i <= steps; i++) {
                 const t = (i / steps) * Math.PI * 2 * 2 + offset;
@@ -2659,130 +2747,284 @@ function generateArtCover() {
                 else ctx.lineTo(px, py);
             }
             ctx.closePath();
-
-            // 线型
-            if (strandStyle === 'dashed') ctx.setLineDash([12, 8]);
-            else if (strandStyle === 'dotted') ctx.setLineDash([3, 5]);
-            else ctx.setLineDash([]);
-
-            // 颜色
-            if (baseColor === null) {
-                const gray = 30 + s * 40;
-                ctx.strokeStyle = `rgb(${gray},${gray},${gray})`;
-            } else {
-                ctx.strokeStyle = baseColor;
-                ctx.globalAlpha = 1 - s * 0.2;
-            }
+            ctx.strokeStyle = palette.colors[s % palette.colors.length];
             ctx.lineWidth = 4 - s * 0.8;
             ctx.lineJoin = 'round';
             ctx.lineCap = 'round';
+            ctx.globalAlpha = 1 - s * 0.15;
             ctx.stroke();
             ctx.globalAlpha = 1;
-            ctx.setLineDash([]);
         }
 
-        // 阴影点阵装饰
-        const dotCount = 40 + srandInt(0, 50);
+        // 交叉点装饰
+        const dotCount = 30 + srandInt(0, 40);
         for (let i = 0; i < dotCount; i++) {
             const dx = srandRange(20, W - 20);
             const dy = srandRange(20, H - 120);
-            const dr = srandRange(1.5, 4);
+            const dr = srandRange(1, 3);
             ctx.beginPath();
             ctx.arc(dx, dy, dr, 0, Math.PI * 2);
-            ctx.fillStyle = baseColor === null
-                ? `rgba(0,0,0,${srandRange(0.05, 0.2)})`
-                : `${baseColor}${Math.floor(srandRange(20, 60)).toString(16).padStart(2, '0')}`;
+            ctx.fillStyle = palette.colors[0] + Math.floor(srandRange(15, 50)).toString(16).padStart(2, '0');
             ctx.fill();
         }
+
+        // 琼斯多项式标注
+        ctx.fillStyle = palette.colors[0];
+        ctx.globalAlpha = 0.2;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`V(t): crossings=${jp.crossings} w=${jp.writhe}`, 16, H - 108);
+        ctx.globalAlpha = 1;
+
+    } else if (coverType === 'topology') {
+        // ---- 拓扑类型：环面、克莱因瓶、莫比乌斯带投影 ----
+        const topoType = srandInt(0, 4);
+
+        function topoPoint(u, v) {
+            let x, y, z;
+            if (topoType === 0) {
+                // 环面 T²
+                const R = 2, r = 0.8 + jp.coeffs[0] * 0.3;
+                x = (R + r * Math.cos(v)) * Math.cos(u);
+                y = (R + r * Math.cos(v)) * Math.sin(u);
+                z = r * Math.sin(v);
+            } else if (topoType === 1) {
+                // 克莱因瓶投影
+                const a = 3, b = 1;
+                const cu = Math.cos(u), su = Math.sin(u);
+                const cv = Math.cos(v), sv = Math.sin(v);
+                if (u < Math.PI) {
+                    x = (a + cv * Math.sin(u / 2) - sv * Math.sin(u)) * cu;
+                    y = (a + cv * Math.sin(u / 2) - sv * Math.sin(u)) * su;
+                    z = cv * Math.cos(u / 2);
+                } else {
+                    x = (a + cv * Math.sin(u / 2) + sv * Math.sin(u)) * cu;
+                    y = (a + cv * Math.sin(u / 2) + sv * Math.sin(u)) * su;
+                    z = cv * Math.cos(u / 2);
+                }
+            } else if (topoType === 2) {
+                // 莫比乌斯带
+                const a = 2;
+                const half = v / 2;
+                x = (a + u * Math.cos(half)) * Math.cos(v);
+                y = (a + u * Math.cos(half)) * Math.sin(v);
+                z = u * Math.sin(half);
+            } else if (topoType === 3) {
+                // 球极投影的纽结
+                const theta = u, phi = v;
+                x = Math.sin(phi) * Math.cos(theta);
+                y = Math.sin(phi) * Math.sin(theta);
+                z = Math.cos(phi);
+                // 球极投影到平面
+                const denom = 1 - z + 0.01;
+                x = x / denom;
+                y = y / denom;
+            } else {
+                // Boy 曲面（射影平面嵌入）
+                const a = 0.5;
+                x = Math.cos(u) * (a + Math.cos(v / 2) * Math.sin(u) - Math.sin(v / 2) * Math.sin(2 * u) / 2);
+                y = Math.sin(u) * (a + Math.cos(v / 2) * Math.sin(u) - Math.sin(v / 2) * Math.sin(2 * u) / 2);
+                z = Math.sin(v / 2) * Math.sin(u) + Math.cos(v / 2) * Math.sin(2 * u) / 2;
+            }
+            return [x, y, z];
+        }
+
+        const scale = 70;
+        const cx = W / 2, cy = H / 2 - 60;
+        const uSteps = 60, vSteps = 40;
+
+        // 绘制网格线
+        const lineAlpha = 0.6;
+        ctx.lineWidth = 1.2;
+        ctx.lineJoin = 'round';
+
+        // u 方向线条
+        for (let i = 0; i <= uSteps; i += 3) {
+            const u = (i / uSteps) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.strokeStyle = palette.colors[i % palette.colors.length];
+            ctx.globalAlpha = lineAlpha;
+            for (let j = 0; j <= vSteps; j++) {
+                const v = (j / vSteps) * Math.PI * 2;
+                const [x, , z] = topoPoint(u, v);
+                const px = cx + x * scale;
+                const py = cy + z * scale;
+                if (j === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+        }
+        // v 方向线条
+        for (let j = 0; j <= vSteps; j += 3) {
+            const v = (j / vSteps) * Math.PI * 2;
+            ctx.beginPath();
+            ctx.strokeStyle = palette.colors[(j + 1) % palette.colors.length];
+            ctx.globalAlpha = lineAlpha;
+            for (let i = 0; i <= uSteps; i++) {
+                const u = (i / uSteps) * Math.PI * 2;
+                const [x, , z] = topoPoint(u, v);
+                const px = cx + x * scale;
+                const py = cy + z * scale;
+                if (i === 0) ctx.moveTo(px, py);
+                else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+
+        // 拓扑标注
+        const topoNames = ['Torus T²', 'Klein Bottle', 'Möbius Strip', 'Stereographic', 'Boy Surface'];
+        ctx.fillStyle = palette.colors[0];
+        ctx.globalAlpha = 0.2;
+        ctx.font = '10px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(topoNames[topoType], 16, H - 108);
+        ctx.globalAlpha = 1;
 
     } else {
-        // ---- 点阵迭代（logistic map 可视化） ----
-        let c = (_seed % 1000) / 1000;
-        // 迭代 50 次确定参数 c
-        for (let i = 0; i < 50; i++) {
-            c = 3.9 * c * (1 - c);
-        }
+        // ---- 几何类型：分形、螺旋、对称图案 ----
+        const geoType = srandInt(0, 4);
 
-        const paletteChoice = srandInt(0, 2);
-        let dotColor, bgColor;
-        if (paletteChoice === 0) {
-            // 灰度
-            dotColor = '#2a2a2a';
-            bgColor = '#f8f6f0';
-        } else if (paletteChoice === 1) {
-            dotColor = '#312e81';
-            bgColor = '#f0f0ff';
-        } else {
-            dotColor = '#7c2d12';
-            bgColor = '#fff8f0';
-        }
+        if (geoType === 0) {
+            // 分形树
+            function drawTree(x, y, angle, depth, len) {
+                if (depth <= 0 || len < 2) return;
+                const x2 = x + Math.cos(angle) * len;
+                const y2 = y + Math.sin(angle) * len;
+                ctx.beginPath();
+                ctx.moveTo(x, y);
+                ctx.lineTo(x2, y2);
+                ctx.strokeStyle = palette.colors[depth % palette.colors.length];
+                ctx.lineWidth = depth * 0.5;
+                ctx.globalAlpha = 0.3 + depth * 0.1;
+                ctx.stroke();
+                const branchAngle = 0.3 + jp.coeffs[0] * 0.3;
+                const shrink = 0.65 + jp.coeffs[1] * 0.1;
+                drawTree(x2, y2, angle - branchAngle, depth - 1, len * shrink);
+                drawTree(x2, y2, angle + branchAngle, depth - 1, len * shrink);
+            }
+            drawTree(W / 2, H - 140, -Math.PI / 2, 10, 80);
+            ctx.globalAlpha = 1;
 
-        ctx.fillStyle = bgColor;
-        ctx.fillRect(0, 0, W, H);
-
-        // logistic map 迭代点阵
-        const margin = 30;
-        const plotW = W - margin * 2;
-        const plotH = H - 160;
-        const plotTop = margin + 60; // 下移使曲线居中
-        const iterations = 200;
-        const discard = 50;
-        let x = srand();
-
-        ctx.fillStyle = dotColor;
-        for (let i = 0; i < iterations; i++) {
-            x = c * x * (1 - x);
-            if (i < discard) continue;
-            const px = margin + ((i - discard) / (iterations - discard)) * plotW;
-            const py = plotTop + (1 - x) * plotH;
-            const r = 2.5 + srand() * 2;
+        } else if (geoType === 1) {
+            // 阿基米德螺旋
+            const cx = W / 2, cy = H / 2 - 60;
+            const a = 2, b = 0.5 + Math.abs(jp.coeffs[0]) * 0.5;
             ctx.beginPath();
-            ctx.arc(px, py, r, 0, Math.PI * 2);
-            ctx.fill();
-        }
+            ctx.strokeStyle = palette.colors[0];
+            ctx.lineWidth = 2;
+            for (let t = 0; t < Math.PI * 12; t += 0.02) {
+                const r = a + b * t;
+                const x = cx + r * Math.cos(t);
+                const y = cy + r * Math.sin(t);
+                if (t === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            // 对数螺旋叠加
+            ctx.beginPath();
+            ctx.strokeStyle = palette.colors[1];
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.6;
+            const k = 0.1 + Math.abs(jp.coeffs[2]) * 0.1;
+            for (let t = 0; t < Math.PI * 8; t += 0.02) {
+                const r = 5 * Math.exp(k * t);
+                const x = cx + r * Math.cos(t);
+                const y = cy + r * Math.sin(t);
+                if (t === 0) ctx.moveTo(x, y);
+                else if (r < 200) ctx.lineTo(x, y);
+            }
+            ctx.stroke();
+            ctx.globalAlpha = 1;
 
-        // 连线版本（bifurcation hint）
-        x = srand();
-        ctx.beginPath();
-        ctx.strokeStyle = dotColor;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = 0.4;
-        ctx.lineJoin = 'round';
-        for (let i = 0; i < iterations; i++) {
-            x = c * x * (1 - x);
-            const px = margin + (i / iterations) * plotW;
-            const py = plotTop + (1 - x) * plotH;
-            if (i === 0) ctx.moveTo(px, py);
-            else ctx.lineTo(px, py);
-        }
-        ctx.stroke();
-        ctx.globalAlpha = 1;
+        } else if (geoType === 2) {
+            // 对称镶嵌（彭罗斯风格）
+            const cx = W / 2, cy = H / 2 - 60;
+            const n = 5 + (jp.crossings % 4); // 5~8 重对称
+            const rings = 4;
+            for (let ring = 1; ring <= rings; ring++) {
+                const r = ring * 35;
+                const count = n * ring;
+                for (let i = 0; i < count; i++) {
+                    const angle = (i / count) * Math.PI * 2 + ring * 0.2;
+                    const x = cx + r * Math.cos(angle);
+                    const y = cy + r * Math.sin(angle);
+                    const size = 6 + ring * 2;
+                    ctx.beginPath();
+                    // 交替多边形
+                    const sides = n;
+                    for (let s = 0; s <= sides; s++) {
+                        const a = (s / sides) * Math.PI * 2 + angle;
+                        const px = x + size * Math.cos(a);
+                        const py = y + size * Math.sin(a);
+                        if (s === 0) ctx.moveTo(px, py);
+                        else ctx.lineTo(px, py);
+                    }
+                    ctx.closePath();
+                    ctx.strokeStyle = palette.colors[ring % palette.colors.length];
+                    ctx.lineWidth = 1.2;
+                    ctx.globalAlpha = 0.5 + ring * 0.1;
+                    ctx.stroke();
+                }
+            }
+            ctx.globalAlpha = 1;
 
-        // 网格线
-        ctx.strokeStyle = dotColor;
-        ctx.globalAlpha = 0.08;
-        ctx.lineWidth = 0.5;
-        for (let gy = 0; gy < 6; gy++) {
-            const yy = plotTop + (gy / 5) * plotH;
-            ctx.beginPath(); ctx.moveTo(margin, yy); ctx.lineTo(W - margin, yy); ctx.stroke();
-        }
-        for (let gx = 0; gx < 10; gx++) {
-            const xx = margin + (gx / 9) * plotW;
-            ctx.beginPath(); ctx.moveTo(xx, plotTop); ctx.lineTo(xx, plotTop + plotH); ctx.stroke();
-        }
-        ctx.globalAlpha = 1;
+        } else if (geoType === 3) {
+            // 谢尔宾斯基三角
+            function sierpinski(x, y, size, depth) {
+                if (depth <= 0 || size < 4) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, y - size);
+                    ctx.lineTo(x - size * 0.866, y + size * 0.5);
+                    ctx.lineTo(x + size * 0.866, y + size * 0.5);
+                    ctx.closePath();
+                    ctx.fillStyle = palette.colors[depth % palette.colors.length];
+                    ctx.globalAlpha = 0.4 + depth * 0.1;
+                    ctx.fill();
+                    return;
+                }
+                const half = size / 2;
+                sierpinski(x, y - half, half, depth - 1);
+                sierpinski(x - half * 0.866, y + half * 0.5, half, depth - 1);
+                sierpinski(x + half * 0.866, y + half * 0.5, half, depth - 1);
+            }
+            sierpinski(W / 2, H / 2 - 40, 160, 5);
+            ctx.globalAlpha = 1;
 
-        // 参数标注
-        ctx.fillStyle = dotColor;
-        ctx.globalAlpha = 0.35;
-        ctx.font = '11px monospace';
-        ctx.textAlign = 'left';
-        ctx.fillText('c = ' + c.toFixed(6), margin, H - 85);
-        ctx.fillText('iterations: 50', margin, H - 70);
-        ctx.globalAlpha = 1;
+        } else {
+            // 李萨如图形
+            const cx = W / 2, cy = H / 2 - 60;
+            const a = 3 + Math.abs(Math.round(jp.coeffs[0] * 3));
+            const b = 3 + Math.abs(Math.round(jp.coeffs[1] * 3));
+            const delta = jp.coeffs[2] * Math.PI;
+            ctx.beginPath();
+            ctx.strokeStyle = palette.colors[0];
+            ctx.lineWidth = 2;
+            for (let t = 0; t < Math.PI * 2; t += 0.005) {
+                const x = cx + 100 * Math.sin(a * t + delta);
+                const y = cy + 100 * Math.sin(b * t);
+                if (t === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            // 叠加第二条
+            ctx.beginPath();
+            ctx.strokeStyle = palette.colors[1];
+            ctx.lineWidth = 1.5;
+            ctx.globalAlpha = 0.5;
+            const delta2 = delta + Math.PI / 4;
+            for (let t = 0; t < Math.PI * 2; t += 0.005) {
+                const x = cx + 90 * Math.sin((a + 1) * t + delta2);
+                const y = cy + 90 * Math.sin((b + 1) * t);
+                if (t === 0) ctx.moveTo(x, y);
+                else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.stroke();
+            ctx.globalAlpha = 1;
+        }
     }
-
-    // 书名标签
 
     // 书名标签
     ctx.fillStyle = 'rgba(0,0,0,0.7)';
@@ -3916,6 +4158,13 @@ function bindEvents() {
     document.getElementById('btn-close-cover-gen').addEventListener('click', closeCoverGen);
     document.getElementById('btn-regen-cover').addEventListener('click', generateArtCover);
     document.getElementById('btn-apply-cover').addEventListener('click', applyArtCover);
+    document.querySelectorAll('.cover-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.cover-type-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            generateArtCover();
+        });
+    });
 
     // 阅读器
     document.getElementById('btn-close-reader').addEventListener('click', closeReader);
@@ -3923,6 +4172,7 @@ function bindEvents() {
     document.getElementById('btn-next-page').addEventListener('click', nextPage);
     document.getElementById('btn-zoom-in').addEventListener('click', zoomIn);
     document.getElementById('btn-zoom-out').addEventListener('click', zoomOut);
+    document.getElementById('btn-diff-read').addEventListener('click', openDiffFromReader);
 
     // 目录侧边栏
     document.getElementById('btn-toggle-toc').addEventListener('click', toggleToc);
@@ -3984,6 +4234,21 @@ function bindEvents() {
             if (e.key === 'Escape') closeQuickView();
             return;
         }
+        // 关系图 Escape
+        if (document.getElementById('graph-overlay').classList.contains('open')) {
+            if (e.key === 'Escape') closeGraph();
+            return;
+        }
+        // 笔记编辑器 Escape
+        if (document.getElementById('note-editor-overlay').classList.contains('open')) {
+            if (e.key === 'Escape') closeNoteEditor();
+            return;
+        }
+        // 差分阅读器 Escape
+        if (document.getElementById('diff-reader-overlay').classList.contains('open')) {
+            if (e.key === 'Escape') closeDiffReader();
+            return;
+        }
         if (!document.getElementById('reader-overlay').classList.contains('open')) return;
         // Ctrl+F 打开PDF搜索
         if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
@@ -4009,6 +4274,1133 @@ function bindEvents() {
     window.addEventListener('beforeunload', () => {
         recordReadingStat();
     });
+
+    // ---- 独立笔记页 ----
+    document.getElementById('btn-new-note').addEventListener('click', createNewNote);
+    document.getElementById('btn-open-graph').addEventListener('click', openGraph);
+    document.getElementById('btn-close-note-editor').addEventListener('click', closeNoteEditor);
+    document.getElementById('note-editor-overlay').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('note-editor-overlay')) closeNoteEditor();
+    });
+    document.getElementById('btn-delete-note').addEventListener('click', deleteCurrentNote);
+    document.getElementById('btn-export-note-md').addEventListener('click', exportCurrentNoteMd);
+    document.getElementById('btn-note-diff-read').addEventListener('click', openDiffFromNote);
+    document.querySelectorAll('[data-note-editor-tab]').forEach(btn => {
+        btn.addEventListener('click', () => switchNoteEditorTab(btn.dataset.noteEditorTab));
+    });
+    document.getElementById('btn-note-undo-draw').addEventListener('click', () => {
+        if (!noteEditorSignaturePad) return;
+        const data = noteEditorSignaturePad.toData();
+        if (data.length > 0) { data.pop(); noteEditorSignaturePad.fromData(data); saveCurrentNoteEditor(); }
+    });
+    document.getElementById('btn-note-clear-draw').addEventListener('click', () => {
+        if (noteEditorSignaturePad) { noteEditorSignaturePad.clear(); saveCurrentNoteEditor(); }
+    });
+
+    // ---- 笔记关系图 ----
+    document.getElementById('btn-close-graph').addEventListener('click', closeGraph);
+    document.getElementById('graph-overlay').addEventListener('click', (e) => {
+        if (e.target === document.getElementById('graph-overlay')) closeGraph();
+    });
+
+    // ---- 差分阅读器 ----
+    document.getElementById('btn-close-diff-reader').addEventListener('click', closeDiffReader);
+    document.getElementById('diff-left-prev').addEventListener('click', () => diffNav('left', -1));
+    document.getElementById('diff-left-next').addEventListener('click', () => diffNav('left', 1));
+    document.getElementById('diff-left-zoom-in').addEventListener('click', () => diffZoom('left', 0.25));
+    document.getElementById('diff-left-zoom-out').addEventListener('click', () => diffZoom('left', -0.25));
+    document.getElementById('diff-right-prev').addEventListener('click', () => diffNav('right', -1));
+    document.getElementById('diff-right-next').addEventListener('click', () => diffNav('right', 1));
+    document.getElementById('diff-right-zoom-in').addEventListener('click', () => diffZoom('right', 0.25));
+    document.getElementById('diff-right-zoom-out').addEventListener('click', () => diffZoom('right', -0.25));
+
+    // ---- 图设置 ----
+    const gns = document.getElementById('graph-node-size-slider');
+    if (gns) {
+        localforage.getItem('graphNodeSize').then(v => { if (v != null) { gns.value = v; document.getElementById('graph-node-size-value').textContent = v; } });
+        gns.oninput = () => { document.getElementById('graph-node-size-value').textContent = gns.value; localforage.setItem('graphNodeSize', +gns.value); };
+    }
+    const grs = document.getElementById('graph-repulsion-slider');
+    if (grs) {
+        localforage.getItem('graphRepulsion').then(v => { if (v != null) { grs.value = v; document.getElementById('graph-repulsion-value').textContent = v; } });
+        grs.oninput = () => { document.getElementById('graph-repulsion-value').textContent = grs.value; localforage.setItem('graphRepulsion', +grs.value); };
+    }
+    const gew = document.getElementById('graph-edge-width-slider');
+    if (gew) {
+        localforage.getItem('graphEdgeWidth').then(v => { if (v != null) { gew.value = v; document.getElementById('graph-edge-width-value').textContent = v; } });
+        gew.oninput = () => { document.getElementById('graph-edge-width-value').textContent = gew.value; localforage.setItem('graphEdgeWidth', +gew.value); };
+    }
+}
+
+// ============================================================
+//  独立笔记 — 页面渲染
+// ============================================================
+function renderNotesPage() {
+    const container = document.getElementById('notes-container');
+    if (!standaloneNotes.length) {
+        container.innerHTML = `
+            <div class="empty-notes">
+                <i data-lucide="sticky-note"></i>
+                <p>还没有笔记，点击「新建笔记」开始</p>
+            </div>`;
+        lucide.createIcons();
+        return;
+    }
+
+    // 按更新时间倒序
+    const sorted = [...standaloneNotes].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    let html = '<div class="notes-grid">';
+    for (const note of sorted) {
+        const preview = (note.content || '').replace(/[#*\[\]`>_~-]/g, '').substring(0, 120);
+        const linkCount = (note.links || []).length;
+        const dateStr = new Date(note.updatedAt || note.createdAt).toLocaleDateString('zh-CN');
+        html += `
+            <div class="note-card" data-id="${note.id}">
+                <div class="note-card-title">${escHtml(note.title || '未命名笔记')}</div>
+                <div class="note-card-preview">${escHtml(preview) || '暂无内容'}</div>
+                <div class="note-card-meta">
+                    <span>${dateStr}</span>
+                    ${linkCount > 0 ? `<span class="note-card-links"><i data-lucide="link"></i><span>${linkCount}</span></span>` : ''}
+                </div>
+            </div>`;
+    }
+    html += '</div>';
+    container.innerHTML = html;
+
+    container.querySelectorAll('.note-card').forEach(card => {
+        card.addEventListener('click', () => openNoteEditor(card.dataset.id));
+    });
+    lucide.createIcons();
+}
+
+// ============================================================
+//  独立笔记 — CRUD
+// ============================================================
+function createNewNote() {
+    const note = {
+        id: 'note_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8),
+        title: '',
+        content: '',
+        drawing: null,
+        links: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now()
+    };
+    standaloneNotes.push(note);
+    saveStandaloneNotes();
+    openNoteEditor(note.id);
+}
+
+function deleteCurrentNote() {
+    if (!currentEditNoteId) return;
+    if (!confirm('确定删除此笔记？')) return;
+    standaloneNotes = standaloneNotes.filter(n => n.id !== currentEditNoteId);
+    // 清理其他笔记中指向此笔记的链接
+    const deletedTitle = currentEditNoteId;
+    standaloneNotes.forEach(n => {
+        if (n.links) n.links = n.links.filter(id => id !== currentEditNoteId);
+    });
+    saveStandaloneNotes();
+    currentEditNoteId = null;
+    closeNoteEditor();
+    renderNotesPage();
+}
+
+function getCurrentEditNote() {
+    return standaloneNotes.find(n => n.id === currentEditNoteId);
+}
+
+// ============================================================
+//  独立笔记 — 编辑器
+// ============================================================
+function openNoteEditor(noteId) {
+    const note = standaloneNotes.find(n => n.id === noteId);
+    if (!note) return;
+    currentEditNoteId = noteId;
+
+    document.getElementById('note-editor-title').value = note.title || '';
+    document.getElementById('note-editor-textarea').value = note.content || '';
+
+    const meta = `创建于 ${new Date(note.createdAt).toLocaleString('zh-CN')} · 更新于 ${new Date(note.updatedAt).toLocaleString('zh-CN')}`;
+    document.getElementById('note-editor-meta').textContent = meta;
+
+    // 重置tab
+    currentNoteEditorTab = 'edit';
+    updateNoteEditorTabUI();
+    document.getElementById('note-edit-wrap').classList.remove('hidden');
+    document.getElementById('note-preview-full').classList.add('hidden');
+    document.getElementById('note-draw-wrap').classList.add('hidden');
+
+    // 渲染预览
+    renderNoteEditorPreview();
+
+    // 绑定输入事件
+    const textarea = document.getElementById('note-editor-textarea');
+    textarea.oninput = () => {
+        renderNoteEditorPreview();
+        saveCurrentNoteEditor();
+    };
+    document.getElementById('note-editor-title').oninput = () => {
+        saveCurrentNoteEditor();
+    };
+
+    // 初始化 Markdown 自动补全
+    initMdAutocomplete(textarea);
+
+    // 销毁旧的 signaturePad
+    if (noteEditorSignaturePad) { noteEditorSignaturePad.off(); noteEditorSignaturePad = null; }
+
+    document.getElementById('note-editor-overlay').classList.add('open');
+    lucide.createIcons();
+}
+
+function closeNoteEditor() {
+    saveCurrentNoteEditor();
+    document.getElementById('note-editor-overlay').classList.remove('open');
+    currentEditNoteId = null;
+    if (noteEditorSignaturePad) { noteEditorSignaturePad.off(); noteEditorSignaturePad = null; }
+    renderNotesPage();
+}
+
+function switchNoteEditorTab(tab) {
+    currentNoteEditorTab = tab;
+    updateNoteEditorTabUI();
+    document.getElementById('note-edit-wrap').classList.toggle('hidden', tab !== 'edit');
+    document.getElementById('note-preview-full').classList.toggle('hidden', tab !== 'preview');
+    document.getElementById('note-draw-wrap').classList.toggle('hidden', tab !== 'draw');
+    if (tab === 'edit' || tab === 'preview') {
+        renderNoteEditorPreview();
+    }
+    if (tab === 'draw') {
+        initNoteEditorSignaturePad();
+    }
+}
+
+function updateNoteEditorTabUI() {
+    document.querySelectorAll('[data-note-editor-tab]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.noteEditorTab === currentNoteEditorTab);
+    });
+}
+
+function parseWikiLinks(html) {
+    return html.replace(/\[\[([^\]]+)\]\]/g, (_, title) => {
+        const targetNote = standaloneNotes.find(n => n.title === title.trim());
+        if (targetNote) {
+            return `<a class="wiki-link" data-note-id="${targetNote.id}" onclick="openNoteEditor('${targetNote.id}')">${escHtml(title.trim())}</a>`;
+        }
+        return `<span class="wiki-link" style="opacity:0.6;">${escHtml(title.trim())}</span>`;
+    });
+}
+
+function renderNoteEditorPreview() {
+    const textarea = document.getElementById('note-editor-textarea');
+    const previewSide = document.getElementById('note-editor-preview');
+    const previewFull = document.getElementById('note-preview-full');
+    const text = textarea.value;
+
+    const renderTarget = currentNoteEditorTab === 'preview' ? previewFull : previewSide;
+
+    if (!text) {
+        renderTarget.innerHTML = '<span style="color:var(--text-tertiary);">暂无内容</span>';
+        return;
+    }
+
+    let html = (typeof marked !== 'undefined') ? marked.parse(text) : escHtml(text);
+
+    // KaTeX 数学公式
+    if (typeof katex !== 'undefined') {
+        html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
+            try { return katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false }); }
+            catch { return `<code>${escHtml(expr)}</code>`; }
+        });
+        html = html.replace(/\$([^\$\n]+?)\$/g, (_, expr) => {
+            try { return katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false }); }
+            catch { return `<code>${escHtml(expr)}</code>`; }
+        });
+    }
+
+    // 解析 [[wiki links]]
+    html = parseWikiLinks(html);
+
+    renderTarget.innerHTML = html;
+
+    // 更新 links 数据
+    extractNoteLinks();
+}
+
+function extractNoteLinks() {
+    const note = getCurrentEditNote();
+    if (!note) return;
+    const textarea = document.getElementById('note-editor-textarea');
+    const text = textarea.value;
+    const linkTitles = [];
+    const re = /\[\[([^\]]+)\]\]/g;
+    let m;
+    while ((m = re.exec(text)) !== null) {
+        const linked = standaloneNotes.find(n => n.title === m[1].trim());
+        if (linked && linked.id !== note.id) {
+            linkTitles.push(linked.id);
+        }
+    }
+    note.links = [...new Set(linkTitles)];
+}
+
+function saveCurrentNoteEditor() {
+    const note = getCurrentEditNote();
+    if (!note) return;
+    note.title = document.getElementById('note-editor-title').value;
+    note.content = document.getElementById('note-editor-textarea').value;
+    note.updatedAt = Date.now();
+    if (noteEditorSignaturePad && !noteEditorSignaturePad.isEmpty()) {
+        note.drawing = noteEditorSignaturePad.toDataURL();
+    }
+    extractNoteLinks();
+    saveStandaloneNotes();
+}
+
+function initNoteEditorSignaturePad() {
+    const canvas = document.getElementById('note-draw-canvas');
+    if (!canvas) return;
+    if (noteEditorSignaturePad && noteEditorSignaturePad._canvas === canvas) return;
+
+    const wrap = canvas.parentElement;
+    const rect = wrap.getBoundingClientRect();
+    canvas.width = rect.width;
+    canvas.height = rect.height - 44;
+
+    if (noteEditorSignaturePad) noteEditorSignaturePad.off();
+    noteEditorSignaturePad = new SignaturePad(canvas, {
+        penColor: document.body.classList.contains('light-theme') ? '#1a1a20' : '#e0e0e6',
+        backgroundColor: 'rgba(0,0,0,0)',
+        minWidth: 1, maxWidth: 3
+    });
+
+    const note = getCurrentEditNote();
+    if (note && note.drawing) {
+        noteEditorSignaturePad.fromDataURL(note.drawing);
+    }
+
+    noteEditorSignaturePad.addEventListener('endStroke', () => {
+        clearTimeout(noteEditorSaveTimer);
+        noteEditorSaveTimer = setTimeout(() => saveCurrentNoteEditor(), 500);
+    });
+    noteEditorSignaturePad._canvas = canvas;
+}
+
+async function exportCurrentNoteMd() {
+    const note = getCurrentEditNote();
+    if (!note) return;
+    const exeDir = await getExeDir();
+    if (!exeDir) { showToast('无法获取应用目录'); return; }
+    const safeName = sanitizeFilename(note.title || '未命名笔记');
+    const dir = exeDir + '\\notes\\standalone\\' + safeName;
+    let mdContent = `# ${note.title || '未命名笔记'}\n\n`;
+    if (note.content) mdContent += note.content + '\n';
+    if (note.drawing) {
+        const imgBytes = await dataUrlToWhiteBgBytes(note.drawing);
+        const imgPath = dir + '\\drawing.png';
+        const saved = await saveFileViaTauri(imgPath, imgBytes);
+        if (saved) mdContent += '\n\n## 手写笔记\n\n![手写笔记](drawing.png)\n';
+    }
+    const mdPath = dir + '\\' + safeName + '.md';
+    const encoder = new TextEncoder();
+    const ok = await saveFileViaTauri(mdPath, encoder.encode(mdContent));
+    if (ok) showToast('已导出到 notes\\standalone\\' + safeName);
+}
+
+// ============================================================
+//  差分阅读器
+// ============================================================
+async function openDiffFromNote() {
+    const note = getCurrentEditNote();
+    if (!note) return;
+    // 让用户选择一个 PDF 来源（书架或论文）
+    const pdfItems = [
+        ...library.map(b => ({ id: b.id, name: b.name, type: 'book' })),
+        ...papers.map(p => ({ id: p.id, name: p.name, type: 'paper' }))
+    ];
+    if (!pdfItems.length) { showToast('书库为空，请先导入 PDF'); return; }
+
+    // 简单选择弹窗
+    const selected = await showPdfPicker(pdfItems);
+    if (!selected) return;
+
+    let pdfData;
+    if (selected.type === 'book') {
+        const book = library.find(b => b.id === selected.id);
+        if (!book._pdfUint8) {
+            book._pdfUint8 = await loadPdfData(selected.id);
+        }
+        pdfData = book._pdfUint8;
+    } else {
+        const paper = papers.find(p => p.id === selected.id);
+        if (!paper._pdfUint8) {
+            paper._pdfUint8 = await loadPaperPdfData(selected.id);
+        }
+        pdfData = paper._pdfUint8;
+    }
+    if (!pdfData) { showToast('PDF 数据丢失'); return; }
+
+    closeNoteEditor();
+    await openDiffReader({
+        left: { type: 'pdf', pdfData, name: selected.name, currentPage: 1, zoom: 1.5 },
+        right: { type: 'note', noteId: note.id, noteTitle: note.title }
+    });
+}
+
+async function openDiffFromReader() {
+    if (!pdfDoc || !currentBookId) return;
+    const currentPdfData = isPaperReader
+        ? papers.find(p => p.id === currentBookId)?._pdfUint8
+        : library.find(b => b.id === currentBookId)?._pdfUint8;
+    if (!currentPdfData) { showToast('当前 PDF 数据不可用'); return; }
+
+    const currentName = document.getElementById('reader-title').textContent;
+    // 让用户选择另一个 PDF
+    const otherItems = [
+        ...library.filter(b => b.id !== currentBookId || isPaperReader).map(b => ({ id: b.id, name: b.name, type: 'book' })),
+        ...papers.filter(p => p.id !== currentBookId || !isPaperReader).map(p => ({ id: p.id, name: p.name, type: 'paper' }))
+    ];
+    if (!otherItems.length) { showToast('没有其他 PDF 可用于对比'); return; }
+
+    const selected = await showPdfPicker(otherItems);
+    if (!selected) return;
+
+    let otherPdfData;
+    if (selected.type === 'book') {
+        const book = library.find(b => b.id === selected.id);
+        if (!book._pdfUint8) book._pdfUint8 = await loadPdfData(selected.id);
+        otherPdfData = book._pdfUint8;
+    } else {
+        const paper = papers.find(p => p.id === selected.id);
+        if (!paper._pdfUint8) paper._pdfUint8 = await loadPaperPdfData(selected.id);
+        otherPdfData = paper._pdfUint8;
+    }
+    if (!otherPdfData) { showToast('PDF 数据丢失'); return; }
+
+    closeReader();
+    await openDiffReader({
+        left: { type: 'pdf', pdfData: currentPdfData, name: currentName, currentPage: 1, zoom: 1.5 },
+        right: { type: 'pdf', pdfData: otherPdfData, name: selected.name, currentPage: 1, zoom: 1.5 }
+    });
+}
+
+function showPdfPicker(items) {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'note-editor-overlay open';
+        overlay.style.zIndex = '200';
+        overlay.innerHTML = `
+            <div style="background:var(--bg-modal);border:1px solid var(--border-strong);border-radius:16px;padding:24px;max-width:500px;width:90vw;max-height:70vh;overflow-y:auto;">
+                <h3 style="margin-bottom:16px;font-size:16px;">选择 PDF 文档</h3>
+                <div style="display:flex;flex-direction:column;gap:8px;" id="pdf-picker-list">
+                    ${items.map(it => `
+                        <button class="btn" data-id="${it.id}" data-type="${it.type}" style="justify-content:flex-start;text-align:left;">
+                            <i data-lucide="${it.type === 'book' ? 'library' : 'file-text'}"></i>
+                            ${escHtml(it.name)}
+                        </button>
+                    `).join('')}
+                </div>
+                <div style="margin-top:16px;text-align:right;">
+                    <button class="btn" id="pdf-picker-cancel">取消</button>
+                </div>
+            </div>`;
+        document.body.appendChild(overlay);
+        lucide.createIcons();
+
+        overlay.querySelector('#pdf-picker-cancel').addEventListener('click', () => {
+            overlay.remove();
+            resolve(null);
+        });
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) { overlay.remove(); resolve(null); }
+        });
+        overlay.querySelectorAll('#pdf-picker-list .btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                overlay.remove();
+                resolve({ id: btn.dataset.id, type: btn.dataset.type, name: btn.textContent.trim() });
+            });
+        });
+    });
+}
+
+async function openDiffReader(config) {
+    diffState = {
+        left: { ...config.left, totalPages: 0, pdfDoc: null },
+        right: { ...config.right }
+    };
+
+    document.getElementById('diff-reader-title').textContent =
+        `${config.left.name || ''} ↔ ${config.right.noteTitle || config.right.name || ''}`;
+
+    // 加载左侧 PDF
+    if (config.left.type === 'pdf') {
+        try {
+            diffState.left.pdfDoc = await parsePdf(config.left.pdfData, 30000);
+            diffState.left.totalPages = diffState.left.pdfDoc.numPages;
+        } catch (e) {
+            showToast('左侧 PDF 解析失败');
+            return;
+        }
+    }
+
+    // 加载右侧 PDF（如果有的话）
+    if (config.right.type === 'pdf') {
+        try {
+            diffState.right.pdfDoc = await parsePdf(config.right.pdfData, 30000);
+            diffState.right.totalPages = diffState.right.pdfDoc.numPages;
+        } catch (e) {
+            showToast('右侧 PDF 解析失败');
+            return;
+        }
+    }
+
+    document.getElementById('diff-reader-overlay').classList.add('open');
+    lucide.createIcons();
+
+    await renderDiffPanel('left');
+    await renderDiffPanel('right');
+    updateDiffUI();
+    initDiffDivider();
+}
+
+function closeDiffReader() {
+    document.getElementById('diff-reader-overlay').classList.remove('open');
+    document.getElementById('diff-panel-left').innerHTML = '';
+    document.getElementById('diff-panel-right').innerHTML = '';
+    diffState = null;
+}
+
+async function renderDiffPanel(side) {
+    const panel = document.getElementById('diff-panel-' + side);
+    const state = diffState[side];
+    panel.innerHTML = '';
+
+    if (state.type === 'pdf' && state.pdfDoc) {
+        const page = await state.pdfDoc.getPage(state.currentPage);
+        const viewport = page.getViewport({ scale: state.zoom });
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.floor(viewport.width);
+        canvas.height = Math.floor(viewport.height);
+        canvas.style.maxWidth = '100%';
+        canvas.style.height = 'auto';
+        panel.appendChild(canvas);
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    } else if (state.type === 'note') {
+        const note = standaloneNotes.find(n => n.id === state.noteId);
+        if (note) {
+            // 可编辑的笔记面板：左侧编辑 + 右侧预览
+            const wrap = document.createElement('div');
+            wrap.className = 'diff-note-edit-wrap';
+            wrap.style.cssText = 'display:flex;flex:1;overflow:hidden;width:100%;';
+
+            const textarea = document.createElement('textarea');
+            textarea.className = 'diff-note-textarea';
+            textarea.value = note.content || '';
+            textarea.placeholder = '支持 Markdown 语法...\n使用 [[笔记名]] 创建双链';
+            textarea.style.cssText = 'flex:1;background:transparent;border:none;color:var(--text-primary);font-size:14px;line-height:1.7;padding:16px 20px;resize:none;outline:none;font-family:"Cascadia Code","Fira Code","Consolas",monospace;';
+
+            const preview = document.createElement('div');
+            preview.className = 'diff-note-preview';
+            preview.style.cssText = 'flex:1;padding:16px 20px;overflow-y:auto;font-size:14px;line-height:1.7;border-left:1px solid var(--border);';
+
+            // 渲染预览
+            function renderDiffNotePreview() {
+                const text = textarea.value;
+                if (!text) { preview.innerHTML = '<span style="color:var(--text-tertiary);">暂无内容</span>'; return; }
+                let html = (typeof marked !== 'undefined') ? marked.parse(text) : escHtml(text);
+                if (typeof katex !== 'undefined') {
+                    html = html.replace(/\$\$([\s\S]+?)\$\$/g, (_, expr) => {
+                        try { return katex.renderToString(expr.trim(), { displayMode: true, throwOnError: false }); }
+                        catch { return `<code>${escHtml(expr)}</code>`; }
+                    });
+                    html = html.replace(/\$([^\$\n]+?)\$/g, (_, expr) => {
+                        try { return katex.renderToString(expr.trim(), { displayMode: false, throwOnError: false }); }
+                        catch { return `<code>${escHtml(expr)}</code>`; }
+                    });
+                }
+                html = html.replace(/\[\[([^\]]+)\]\]/g, (_, t) => `<span style="color:var(--accent);background:var(--accent-bg);padding:1px 6px;border-radius:4px;">${escHtml(t.trim())}</span>`);
+                preview.innerHTML = html;
+            }
+            renderDiffNotePreview();
+
+            // 自动保存
+            let saveTimer = null;
+            textarea.oninput = () => {
+                renderDiffNotePreview();
+                clearTimeout(saveTimer);
+                saveTimer = setTimeout(() => {
+                    note.content = textarea.value;
+                    note.updatedAt = Date.now();
+                    // 提取链接
+                    const linkTitles = [];
+                    const re = /\[\[([^\]]+)\]\]/g;
+                    let m;
+                    while ((m = re.exec(textarea.value)) !== null) {
+                        const linked = standaloneNotes.find(n2 => n2.title === m[1].trim());
+                        if (linked && linked.id !== note.id) linkTitles.push(linked.id);
+                    }
+                    note.links = [...new Set(linkTitles)];
+                    saveStandaloneNotes();
+                }, 500);
+            };
+
+            wrap.appendChild(textarea);
+            wrap.appendChild(preview);
+            panel.appendChild(wrap);
+        }
+    }
+}
+
+function updateDiffUI() {
+    if (!diffState) return;
+    ['left', 'right'].forEach(side => {
+        const s = diffState[side];
+        document.getElementById('diff-' + side + '-page').textContent =
+            s.type === 'pdf' ? `${s.currentPage} / ${s.totalPages}` : '—';
+        document.getElementById('diff-' + side + '-zoom').textContent =
+            s.type === 'pdf' ? `${Math.round(s.zoom / 1.5 * 100)}%` : '—';
+    });
+}
+
+async function diffNav(side, delta) {
+    if (!diffState || !diffState[side]) return;
+    const s = diffState[side];
+    if (s.type !== 'pdf' || !s.pdfDoc) return;
+    s.currentPage = Math.max(1, Math.min(s.totalPages, s.currentPage + delta));
+    await renderDiffPanel(side);
+    updateDiffUI();
+}
+
+async function diffZoom(side, delta) {
+    if (!diffState || !diffState[side]) return;
+    const s = diffState[side];
+    if (s.type !== 'pdf') return;
+    s.zoom = Math.max(0.75, Math.min(3.0, s.zoom + delta));
+    await renderDiffPanel(side);
+    updateDiffUI();
+}
+
+function initDiffDivider() {
+    const divider = document.getElementById('diff-panel-divider');
+    const leftPanel = document.getElementById('diff-panel-left');
+    const rightPanel = document.getElementById('diff-panel-right');
+    const body = document.querySelector('.diff-reader-body');
+    if (!divider || !body) return;
+
+    let startX, startLeftWidth;
+
+    divider.onmousedown = (e) => {
+        e.preventDefault();
+        startX = e.clientX;
+        startLeftWidth = leftPanel.offsetWidth;
+        divider.style.background = 'var(--accent)';
+
+        function onMove(e) {
+            const dx = e.clientX - startX;
+            const totalWidth = body.offsetWidth - divider.offsetWidth;
+            const newLeftWidth = Math.max(200, Math.min(totalWidth - 200, startLeftWidth + dx));
+            leftPanel.style.flex = 'none';
+            leftPanel.style.width = newLeftWidth + 'px';
+            rightPanel.style.flex = '1';
+        }
+
+        function onUp() {
+            divider.style.background = '';
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+        }
+
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    };
+}
+
+// ============================================================
+//  笔记关系图 — 力导向图动画
+// ============================================================
+async function openGraph() {
+    if (!standaloneNotes.length) { showToast('还没有笔记'); return; }
+    const overlay = document.getElementById('graph-overlay');
+    overlay.classList.add('open');
+
+    const canvas = document.getElementById('graph-canvas');
+    const ctx = canvas.getContext('2d');
+
+    // 读取设置
+    const nodeSize = (await localforage.getItem('graphNodeSize')) || 10;
+    const repulsion = (await localforage.getItem('graphRepulsion')) || 2000;
+    const graphColorIdx = (await localforage.getItem('graphColorIdx')) || 0;
+    const graphColors = ['#818cf8', '#c084fc', '#22d3ee', '#34d399', '#fb7185', '#f59e0b', '#3b82f6'];
+    const nodeColor = graphColors[graphColorIdx] || graphColors[0];
+    const edgeWidth = (await localforage.getItem('graphEdgeWidth')) || 2.5;
+    const edgeColorIdx = (await localforage.getItem('graphEdgeColorIdx')) || 0;
+    const edgeColor = graphColors[edgeColorIdx] || graphColors[0];
+    const isLight = document.body.classList.contains('light-theme');
+
+    // 构建节点和边
+    const nodes = standaloneNotes.map((n, i) => ({
+        id: n.id,
+        label: n.title || '未命名',
+        x: canvas.width / 2 + (Math.random() - 0.5) * 400,
+        y: canvas.height / 2 + (Math.random() - 0.5) * 400,
+        vx: 0, vy: 0,
+        radius: nodeSize
+    }));
+    const nodeMap = {};
+    nodes.forEach(n => nodeMap[n.id] = n);
+
+    const edges = [];
+    standaloneNotes.forEach(n => {
+        (n.links || []).forEach(targetId => {
+            if (nodeMap[targetId]) {
+                edges.push({ source: n.id, target: targetId });
+            }
+        });
+    });
+
+    // 力导向图模拟
+    function resize() {
+        canvas.width = overlay.clientWidth;
+        canvas.height = overlay.clientHeight;
+    }
+    resize();
+    window.addEventListener('resize', resize);
+
+    let animating = true;
+    let damping = 0.95;
+
+    function simulate() {
+        if (!animating) return;
+
+        // 斥力（所有节点对）
+        for (let i = 0; i < nodes.length; i++) {
+            for (let j = i + 1; j < nodes.length; j++) {
+                const a = nodes[i], b = nodes[j];
+                let dx = b.x - a.x, dy = b.y - a.y;
+                let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+                let force = repulsion / (dist * dist);
+                let fx = (dx / dist) * force, fy = (dy / dist) * force;
+                a.vx -= fx; a.vy -= fy;
+                b.vx += fx; b.vy += fy;
+            }
+        }
+
+        // 引力（边）
+        edges.forEach(e => {
+            const a = nodeMap[e.source], b = nodeMap[e.target];
+            if (!a || !b) return;
+            let dx = b.x - a.x, dy = b.y - a.y;
+            let dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            let force = (dist - 150) * 0.005;
+            let fx = (dx / dist) * force, fy = (dy / dist) * force;
+            a.vx += fx; a.vy += fy;
+            b.vx -= fx; b.vy -= fy;
+        });
+
+        // 中心引力
+        const cx = canvas.width / 2, cy = canvas.height / 2;
+        nodes.forEach(n => {
+            n.vx += (cx - n.x) * 0.0005;
+            n.vy += (cy - n.y) * 0.0005;
+        });
+
+        // 更新位置
+        nodes.forEach(n => {
+            n.vx *= damping;
+            n.vy *= damping;
+            n.x += n.vx;
+            n.y += n.vy;
+            // 边界约束
+            n.x = Math.max(n.radius, Math.min(canvas.width - n.radius, n.x));
+            n.y = Math.max(n.radius, Math.min(canvas.height - n.radius, n.y));
+        });
+
+        // 绘制
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 边 — 使用设置的颜色和粗细，亮/暗主题自适应透明度
+        const edgeAlpha = isLight ? 0.45 : 0.35;
+        ctx.strokeStyle = edgeColor + Math.round(edgeAlpha * 255).toString(16).padStart(2, '0');
+        ctx.lineWidth = edgeWidth;
+        ctx.lineCap = 'round';
+        edges.forEach(e => {
+            const a = nodeMap[e.source], b = nodeMap[e.target];
+            if (!a || !b) return;
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+        });
+
+        // 节点
+        nodes.forEach(n => {
+            // 光晕
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius + 4, 0, Math.PI * 2);
+            ctx.fillStyle = nodeColor + '30';
+            ctx.fill();
+
+            // 节点
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+            ctx.fillStyle = nodeColor;
+            ctx.fill();
+
+            // 标签
+            ctx.fillStyle = document.body.classList.contains('light-theme') ? '#18181b' : '#e4e4e7';
+            ctx.font = '12px "Segoe UI", system-ui, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(n.label.length > 10 ? n.label.substring(0, 10) + '…' : n.label, n.x, n.y + n.radius + 16);
+        });
+
+        graphAnimFrame = requestAnimationFrame(simulate);
+    }
+
+    simulate();
+
+    // 双击节点打开笔记
+    canvas.ondblclick = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        for (const n of nodes) {
+            const dx = mx - n.x, dy = my - n.y;
+            if (dx * dx + dy * dy <= (n.radius + 4) * (n.radius + 4)) {
+                closeGraph();
+                openNoteEditor(n.id);
+                return;
+            }
+        }
+    };
+
+    // 拖拽节点
+    let dragNode = null;
+    canvas.onmousedown = (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        for (const n of nodes) {
+            const dx = mx - n.x, dy = my - n.y;
+            if (dx * dx + dy * dy <= (n.radius + 4) * (n.radius + 4)) {
+                dragNode = n;
+                break;
+            }
+        }
+    };
+    canvas.onmousemove = (e) => {
+        if (!dragNode) return;
+        const rect = canvas.getBoundingClientRect();
+        dragNode.x = e.clientX - rect.left;
+        dragNode.y = e.clientY - rect.top;
+        dragNode.vx = 0;
+        dragNode.vy = 0;
+    };
+    canvas.onmouseup = () => { dragNode = null; };
+
+    // 存储清理函数
+    overlay._cleanup = () => {
+        animating = false;
+        if (graphAnimFrame) cancelAnimationFrame(graphAnimFrame);
+        window.removeEventListener('resize', resize);
+    };
+}
+
+function closeGraph() {
+    const overlay = document.getElementById('graph-overlay');
+    overlay.classList.remove('open');
+    if (overlay._cleanup) { overlay._cleanup(); overlay._cleanup = null; }
+}
+
+// ============================================================
+//  Markdown 自动补全
+// ============================================================
+const MD_COMPLETIONS = [
+    { trigger: '#', items: [
+        { label: '# 标题', insert: '# ', hint: '一级标题' },
+        { label: '## 标题', insert: '## ', hint: '二级标题' },
+        { label: '### 标题', insert: '### ', hint: '三级标题' },
+    ]},
+    { trigger: '*', items: [
+        { label: '* 列表', insert: '* ', hint: '无序列表' },
+        { label: '**粗体**', insert: '****', cursor: 2, hint: '粗体' },
+        { label: '*斜体*', insert: '**', cursor: 1, hint: '斜体' },
+    ]},
+    { trigger: '-', items: [
+        { label: '- 列表', insert: '- ', hint: '无序列表' },
+    ]},
+    { trigger: '`', items: [
+        { label: '`代码`', insert: '``', cursor: 1, hint: '行内代码' },
+        { label: '```代码块', insert: '```\n\n```', cursor: 4, hint: '代码块' },
+    ]},
+    { trigger: '[', items: [
+        { label: '[链接](url)', insert: '[](url)', cursor: 1, hint: '超链接' },
+        { label: '[[双链]]', insert: '[[]]', cursor: 2, hint: '笔记双链' },
+    ]},
+    { trigger: '!', items: [
+        { label: '![图片](url)', insert: '![](url)', cursor: 2, hint: '图片' },
+    ]},
+    { trigger: '>', items: [
+        { label: '> 引用', insert: '> ', hint: '引用块' },
+    ]},
+    { trigger: '$', items: [
+        { label: '$行内公式$', insert: '$$', cursor: 1, hint: '行内数学' },
+        { label: '$$公式块$$', insert: '$$\n\n$$', cursor: 4, hint: '块级数学' },
+    ]},
+    { trigger: '\\', items: [
+        // 希腊字母小写
+        { label: '\\alpha', insert: '\\alpha ', hint: 'α' },
+        { label: '\\beta', insert: '\\beta ', hint: 'β' },
+        { label: '\\gamma', insert: '\\gamma ', hint: 'γ' },
+        { label: '\\delta', insert: '\\delta ', hint: 'δ' },
+        { label: '\\epsilon', insert: '\\epsilon ', hint: 'ε' },
+        { label: '\\varepsilon', insert: '\\varepsilon ', hint: 'ε（变体）' },
+        { label: '\\zeta', insert: '\\zeta ', hint: 'ζ' },
+        { label: '\\eta', insert: '\\eta ', hint: 'η' },
+        { label: '\\theta', insert: '\\theta ', hint: 'θ' },
+        { label: '\\lambda', insert: '\\lambda ', hint: 'λ' },
+        { label: '\\mu', insert: '\\mu ', hint: 'μ' },
+        { label: '\\nu', insert: '\\nu ', hint: 'ν' },
+        { label: '\\xi', insert: '\\xi ', hint: 'ξ' },
+        { label: '\\pi', insert: '\\pi ', hint: 'π' },
+        { label: '\\rho', insert: '\\rho ', hint: 'ρ' },
+        { label: '\\sigma', insert: '\\sigma ', hint: 'σ' },
+        { label: '\\tau', insert: '\\tau ', hint: 'τ' },
+        { label: '\\phi', insert: '\\phi ', hint: 'φ' },
+        { label: '\\varphi', insert: '\\varphi ', hint: 'φ（变体）' },
+        { label: '\\chi', insert: '\\chi ', hint: 'χ' },
+        { label: '\\psi', insert: '\\psi ', hint: 'ψ' },
+        { label: '\\omega', insert: '\\omega ', hint: 'ω' },
+        // 希腊字母大写
+        { label: '\\Gamma', insert: '\\Gamma ', hint: 'Γ' },
+        { label: '\\Delta', insert: '\\Delta ', hint: 'Δ' },
+        { label: '\\Theta', insert: '\\Theta ', hint: 'Θ' },
+        { label: '\\Lambda', insert: '\\Lambda ', hint: 'Λ' },
+        { label: '\\Xi', insert: '\\Xi ', hint: 'Ξ' },
+        { label: '\\Pi', insert: '\\Pi ', hint: 'Π' },
+        { label: '\\Sigma', insert: '\\Sigma ', hint: 'Σ' },
+        { label: '\\Phi', insert: '\\Phi ', hint: 'Φ' },
+        { label: '\\Psi', insert: '\\Psi ', hint: 'Ψ' },
+        { label: '\\Omega', insert: '\\Omega ', hint: 'Ω' },
+        // 运算符
+        { label: '\\frac{}{}', insert: '\\frac{}{}', cursor: 6, hint: '分数' },
+        { label: '\\sqrt{}', insert: '\\sqrt{}', cursor: 6, hint: '根号' },
+        { label: '\\sum', insert: '\\sum ', hint: '求和 Σ' },
+        { label: '\\prod', insert: '\\prod ', hint: '连乘 Π' },
+        { label: '\\int', insert: '\\int ', hint: '积分 ∫' },
+        { label: '\\lim', insert: '\\lim ', hint: '极限' },
+        { label: '\\infty', insert: '\\infty ', hint: '无穷 ∞' },
+        { label: '\\partial', insert: '\\partial ', hint: '偏导 ∂' },
+        { label: '\\nabla', insert: '\\nabla ', hint: '梯度 ∇' },
+        // 关系符
+        { label: '\\leq', insert: '\\leq ', hint: '≤' },
+        { label: '\\geq', insert: '\\geq ', hint: '≥' },
+        { label: '\\neq', insert: '\\neq ', hint: '≠' },
+        { label: '\\approx', insert: '\\approx ', hint: '≈' },
+        { label: '\\equiv', insert: '\\equiv ', hint: '≡' },
+        { label: '\\subset', insert: '\\subset ', hint: '⊂' },
+        { label: '\\supset', insert: '\\supset ', hint: '⊃' },
+        { label: '\\in', insert: '\\in ', hint: '∈' },
+        { label: '\\notin', insert: '\\notin ', hint: '∉' },
+        { label: '\\perp', insert: '\\perp ', hint: '⊥' },
+        { label: '\\parallel', insert: '\\parallel ', hint: '∥' },
+        // 箭头
+        { label: '\\rightarrow', insert: '\\rightarrow ', hint: '→' },
+        { label: '\\leftarrow', insert: '\\leftarrow ', hint: '←' },
+        { label: '\\Rightarrow', insert: '\\Rightarrow ', hint: '⇒' },
+        { label: '\\Leftarrow', insert: '\\Leftarrow ', hint: '⇐' },
+        { label: '\\leftrightarrow', insert: '\\leftrightarrow ', hint: '↔' },
+        { label: '\\uparrow', insert: '\\uparrow ', hint: '↑' },
+        { label: '\\downarrow', insert: '\\downarrow ', hint: '↓' },
+        // 函数
+        { label: '\\sin', insert: '\\sin ', hint: '正弦' },
+        { label: '\\cos', insert: '\\cos ', hint: '余弦' },
+        { label: '\\tan', insert: '\\tan ', hint: '正切' },
+        { label: '\\log', insert: '\\log ', hint: '对数' },
+        { label: '\\ln', insert: '\\ln ', hint: '自然对数' },
+        { label: '\\exp', insert: '\\exp ', hint: '指数' },
+        // 符号
+        { label: '\\cdot', insert: '\\cdot ', hint: '·' },
+        { label: '\\times', insert: '\\times ', hint: '×' },
+        { label: '\\pm', insert: '\\pm ', hint: '±' },
+        { label: '\\mp', insert: '\\mp ', hint: '∓' },
+        { label: '\\star', insert: '\\star ', hint: '⋆' },
+        { label: '\\circ', insert: '\\circ ', hint: '∘' },
+        { label: '\\bullet', insert: '\\bullet ', hint: '•' },
+        { label: '\\forall', insert: '\\forall ', hint: '∀' },
+        { label: '\\exists', insert: '\\exists ', hint: '∃' },
+        { label: '\\neg', insert: '\\neg ', hint: '¬' },
+        { label: '\\land', insert: '\\land ', hint: '∧' },
+        { label: '\\lor', insert: '\\lor ', hint: '∨' },
+        { label: '\\emptyset', insert: '\\emptyset ', hint: '∅' },
+        // 标注
+        { label: '\\hat{}', insert: '\\hat{}', cursor: 5, hint: '帽' },
+        { label: '\\bar{}', insert: '\\bar{}', cursor: 5, hint: '上横线' },
+        { label: '\\vec{}', insert: '\\vec{}', cursor: 5, hint: '向量' },
+        { label: '\\dot{}', insert: '\\dot{}', cursor: 5, hint: '点' },
+        { label: '\\ddot{}', insert: '\\ddot{}', cursor: 6, hint: '两点' },
+        { label: '\\tilde{}', insert: '\\tilde{}', cursor: 6, hint: '波浪' },
+        // 括号
+        { label: '\\left( \\right)', insert: '\\left(  \\right)', cursor: 7, hint: '自适应括号' },
+        { label: '\\langle \\rangle', insert: '\\langle  \\rangle', cursor: 9, hint: '尖括号' },
+        { label: '\\lfloor \\rfloor', insert: '\\lfloor  \\rfloor', cursor: 9, hint: '下取整' },
+        { label: '\\lceil \\rceil', insert: '\\lceil  \\rceil', cursor: 8, hint: '上取整' },
+        // 矩阵
+        { label: '\\begin{pmatrix}', insert: '\\begin{pmatrix}\n  \n\\end{pmatrix}', cursor: 16, hint: '圆括号矩阵' },
+        { label: '\\begin{bmatrix}', insert: '\\begin{bmatrix}\n  \n\\end{bmatrix}', cursor: 16, hint: '方括号矩阵' },
+        // 其他
+        { label: '\\text{}', insert: '\\text{}', cursor: 6, hint: '文本' },
+        { label: '\\mathrm{}', insert: '\\mathrm{}', cursor: 8, hint: '罗马体' },
+        { label: '\\mathbf{}', insert: '\\mathbf{}', cursor: 8, hint: '粗体' },
+        { label: '\\mathcal{}', insert: '\\mathcal{}', cursor: 9, hint: '花体' },
+        { label: '\\boxed{}', insert: '\\boxed{}', cursor: 7, hint: '框' },
+    ]},
+];
+
+function initMdAutocomplete(textarea) {
+    // 创建下拉容器
+    let dropdown = textarea.parentElement.querySelector('.md-autocomplete');
+    if (!dropdown) {
+        dropdown = document.createElement('div');
+        dropdown.className = 'md-autocomplete';
+        textarea.parentElement.style.position = 'relative';
+        textarea.parentElement.appendChild(dropdown);
+    }
+
+    let activeIdx = 0;
+    let currentItems = [];
+    let triggerStart = -1;
+    let visible = false;
+
+    function getContext() {
+        const pos = textarea.selectionStart;
+        const text = textarea.value;
+        let wordStart = pos;
+        while (wordStart > 0 && text[wordStart - 1] !== ' ' && text[wordStart - 1] !== '\n') wordStart--;
+        const word = text.substring(wordStart, pos);
+        return { word, wordStart, pos };
+    }
+
+    function getFilteredItems() {
+        const { word } = getContext();
+        const backslash = MD_COMPLETIONS.find(c => c.trigger === '\\');
+        if (!backslash) return [];
+        if (!word.startsWith('\\') || word.length < 2) return [];
+        return backslash.items.filter(it =>
+            it.label.toLowerCase().startsWith(word.toLowerCase())
+        );
+    }
+
+    function renderDropdown(items) {
+        currentItems = items;
+        activeIdx = 0;
+        dropdown.innerHTML = items.map((item, i) => {
+            let previewHtml = '';
+            if (typeof katex !== 'undefined' && item.hint) {
+                try {
+                    // hint 里存的是符号（如 α、β、≤），用 KaTeX 渲染
+                    previewHtml = katex.renderToString(item.hint, { throwOnError: false, displayMode: false });
+                } catch { previewHtml = `<span>${escHtml(item.hint)}</span>`; }
+            }
+            return `<div class="md-ac-item${i === 0 ? ' active' : ''}" data-idx="${i}">
+                <code>${escHtml(item.label)}</code>
+                <span class="ac-preview">${previewHtml}</span>
+            </div>`;
+        }).join('');
+    }
+
+    function showDropdown() {
+        const filtered = getFilteredItems();
+        if (!filtered.length) { hideDropdown(); return; }
+        renderDropdown(filtered);
+        dropdown.classList.add('show');
+        visible = true;
+
+        // 定位
+        const rect = textarea.getBoundingClientRect();
+        const parentRect = textarea.parentElement.getBoundingClientRect();
+        dropdown.style.left = '8px';
+        dropdown.style.bottom = (parentRect.bottom - rect.top + 4) + 'px';
+        dropdown.style.top = 'auto';
+
+        dropdown.querySelectorAll('.md-ac-item').forEach(el => {
+            el.onmousedown = (e) => { e.preventDefault(); activeIdx = +el.dataset.idx; complete(); };
+        });
+    }
+
+    function hideDropdown() {
+        dropdown.classList.remove('show');
+        visible = false;
+        currentItems = [];
+        triggerStart = -1;
+    }
+
+    function complete() {
+        if (!currentItems.length) return;
+        const item = currentItems[activeIdx];
+        const { wordStart, pos } = getContext();
+        const before = textarea.value.substring(0, wordStart);
+        const after = textarea.value.substring(pos);
+        textarea.value = before + item.insert + after;
+        const cursorPos = item.cursor != null
+            ? wordStart + item.cursor
+            : wordStart + item.insert.length;
+        textarea.setSelectionRange(cursorPos, cursorPos);
+        hideDropdown();
+        textarea.focus();
+        textarea.dispatchEvent(new Event('input'));
+    }
+
+    function updateActive() {
+        dropdown.querySelectorAll('.md-ac-item').forEach((el, i) => {
+            el.classList.toggle('active', i === activeIdx);
+        });
+        const activeEl = dropdown.querySelector('.md-ac-item.active');
+        if (activeEl) activeEl.scrollIntoView({ block: 'nearest' });
+    }
+
+    // Tab 触发/确认，方向键选择
+    textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Tab') {
+            const { word } = getContext();
+            if (word.startsWith('\\') && word.length >= 2) {
+                e.preventDefault();
+                if (visible && currentItems.length) {
+                    complete(); // 已显示 → 确认
+                } else {
+                    showDropdown(); // 未显示 → 展开
+                }
+            }
+        } else if (visible && e.key === 'ArrowDown') {
+            e.preventDefault();
+            activeIdx = (activeIdx + 1) % currentItems.length;
+            updateActive();
+        } else if (visible && e.key === 'ArrowUp') {
+            e.preventDefault();
+            activeIdx = (activeIdx - 1 + currentItems.length) % currentItems.length;
+            updateActive();
+        } else if (visible && e.key === 'Escape') {
+            e.preventDefault();
+            hideDropdown();
+        } else if (visible && (e.key === 'Enter')) {
+            // Enter 不拦截，允许换行
+        }
+    });
+
+    // 输入时实时过滤（如果下拉已展开则更新，否则不自动弹出）
+    textarea.addEventListener('input', () => {
+        if (visible) {
+            const filtered = getFilteredItems();
+            if (filtered.length) {
+                renderDropdown(filtered);
+                dropdown.querySelectorAll('.md-ac-item').forEach(el => {
+                    el.onmousedown = (e) => { e.preventDefault(); activeIdx = +el.dataset.idx; complete(); };
+                });
+            } else {
+                hideDropdown();
+            }
+        }
+    });
+
+    textarea.addEventListener('blur', () => { setTimeout(hideDropdown, 200); });
 }
 
 // ============================================================
@@ -4158,6 +5550,11 @@ function initSettings() {
     renderColorPicks('dark-color-picks', 'dark');
     renderColorPicks('light-color-picks', 'light');
 
+    // 渲染图节点颜色选择器
+    renderGraphColorPicks('graph-color-picks', 'graphColorIdx');
+    // 渲染图连线颜色选择器
+    renderGraphColorPicks('graph-edge-color-picks', 'graphEdgeColorIdx');
+
     lucide.createIcons();
 }
 
@@ -4200,6 +5597,27 @@ function updateColorSwatchActive() {
     });
     document.querySelectorAll('#light-color-picks .color-swatch').forEach((el, idx) => {
         el.classList.toggle('active', idx === lightThemeColorIdx);
+    });
+}
+
+const GRAPH_NODE_COLORS = ['#818cf8', '#c084fc', '#22d3ee', '#34d399', '#fb7185', '#f59e0b', '#3b82f6'];
+
+function renderGraphColorPicks(containerId, storageKey) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    localforage.getItem(storageKey).then(savedIdx => {
+        const activeIdx = savedIdx || 0;
+        GRAPH_NODE_COLORS.forEach((color, idx) => {
+            const swatch = document.createElement('div');
+            swatch.className = 'graph-color-swatch' + (idx === activeIdx ? ' active' : '');
+            swatch.style.background = color;
+            swatch.addEventListener('click', () => {
+                localforage.setItem(storageKey, idx);
+                renderGraphColorPicks(containerId, storageKey);
+            });
+            container.appendChild(swatch);
+        });
     });
 }
 
