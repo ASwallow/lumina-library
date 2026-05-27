@@ -166,6 +166,23 @@
                 <h3 class="chart-title">各论文阅读时长</h3>
                 <div id="per-paper-stats"></div>
             </div>
+            <!-- 知识图谱分析 -->
+            <h3 class="section-subtitle"><i data-lucide="share-2"></i> 知识图谱分析</h3>
+            <div class="chart-card" id="graph-analysis-card">
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
+                    <select id="graph-subgraph-select" class="graph-subgraph-select">
+                        <option value="all">全部子图</option>
+                    </select>
+                    <span id="graph-subgraph-count" class="graph-subgraph-count"></span>
+                </div>
+                <div class="stat-cards stat-cards-sm" id="graph-analysis-metrics">
+                    <div class="stat-card"><div class="stat-number" id="ga-nodes">0</div><div class="stat-label">节点数</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-edges">0</div><div class="stat-label">边数</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-avg-degree">0</div><div class="stat-label">平均度</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-cycles">0</div><div class="stat-label">独立环数</div></div>
+                </div>
+                <div id="graph-analysis-detail" style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.8;"></div>
+            </div>
         </div>
     </main>
 

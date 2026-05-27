@@ -3184,6 +3184,9 @@ function renderDashboard() {
     // ---- 热力图 ----
     renderHeatmap();
     setupHeatmapTooltip();
+
+    // ---- 知识图谱分析 ----
+    renderGraphAnalysis();
 }
 
 function renderItemList(containerId, items) {
@@ -3203,6 +3206,146 @@ function renderItemList(containerId, items) {
             <span class="per-book-time">${label}</span>
         </div>`;
     }).join('') + '</div>';
+}
+
+// ---- 知识图谱分析 ----
+function renderGraphAnalysis() {
+    // 构建节点和边
+    const allNodes = standaloneNotes.map(n => n.id);
+    const nodeTitleMap = {};
+    standaloneNotes.forEach(n => { nodeTitleMap[n.id] = n.title || '未命名'; });
+    const adj = {};
+    allNodes.forEach(id => { adj[id] = []; });
+    const allEdges = [];
+    standaloneNotes.forEach(n => {
+        (n.links || []).forEach(targetId => {
+            if (adj[targetId] !== undefined && targetId !== n.id) {
+                adj[n.id].push(targetId);
+                if (n.id < targetId) allEdges.push([n.id, targetId]);
+            }
+        });
+    });
+
+    // BFS 连通分量
+    const visited = new Set();
+    const components = [];
+    allNodes.forEach(id => {
+        if (visited.has(id)) return;
+        const comp = [];
+        const queue = [id];
+        visited.add(id);
+        while (queue.length) {
+            const cur = queue.shift();
+            comp.push(cur);
+            for (const nb of adj[cur]) {
+                if (!visited.has(nb)) {
+                    visited.add(nb);
+                    queue.push(nb);
+                }
+            }
+        }
+        components.push(comp);
+    });
+
+    // 计算每个子图的特征
+    function compFeatures(comp) {
+        const nodeSet = new Set(comp);
+        let edgeCount = 0;
+        allEdges.forEach(([a, b]) => { if (nodeSet.has(a) && nodeSet.has(b)) edgeCount++; });
+        const n = comp.length;
+        const avgDegree = n > 0 ? (edgeCount * 2 / n) : 0;
+        // 独立环数（圈秩）：E - V + 1（仅对连通图）
+        const cycleRank = Math.max(0, edgeCount - n + 1);
+
+        // DFS 找最短环
+        let shortestCycleLen = Infinity;
+        if (n > 1 && edgeCount >= n) {
+            const subAdj = {};
+            comp.forEach(id => { subAdj[id] = []; });
+            allEdges.forEach(([a, b]) => {
+                if (nodeSet.has(a) && nodeSet.has(b)) {
+                    subAdj[a].push(b);
+                    subAdj[b].push(a);
+                }
+            });
+            // 对每个节点做 BFS 找最短环
+            comp.forEach(startId => {
+                const dist = {};
+                const parent = {};
+                dist[startId] = 0;
+                parent[startId] = null;
+                const queue = [startId];
+                while (queue.length) {
+                    const cur = queue.shift();
+                    for (const nb of subAdj[cur]) {
+                        if (dist[nb] === undefined) {
+                            dist[nb] = dist[cur] + 1;
+                            parent[nb] = cur;
+                            queue.push(nb);
+                        } else if (parent[cur] !== nb && parent[nb] !== cur) {
+                            // 发现环
+                            const cycleLen = dist[cur] + dist[nb] + 1;
+                            if (cycleLen < shortestCycleLen) shortestCycleLen = cycleLen;
+                        }
+                    }
+                }
+            });
+        }
+        if (shortestCycleLen === Infinity) shortestCycleLen = 0;
+        return { nodeCount: n, edgeCount, avgDegree, cycleRank, shortestCycleLen };
+    }
+
+    const features = components.map(comp => ({ ids: comp, ...compFeatures(comp) }));
+    features.sort((a, b) => b.nodeCount - a.nodeCount);
+
+    // 填充选择器
+    const select = document.getElementById('graph-subgraph-select');
+    const countSpan = document.getElementById('graph-subgraph-count');
+    select.innerHTML = '<option value="all">全部子图（' + components.length + ' 个）</option>';
+    features.forEach((f, i) => {
+        const label = '子图 ' + (i + 1) + '（' + f.nodeCount + ' 节点，' + f.edgeCount + ' 边）';
+        select.innerHTML += '<option value="' + i + '">' + label + '</option>';
+    });
+    countSpan.textContent = components.length + ' 个独立知识网';
+
+    function updateMetrics(idx) {
+        let f;
+        if (idx === 'all') {
+            // 汇总所有子图
+            const totalNodes = features.reduce((s, f) => s + f.nodeCount, 0);
+            const totalEdges = features.reduce((s, f) => s + f.edgeCount, 0);
+            const totalCycles = features.reduce((s, f) => s + f.cycleRank, 0);
+            const avgDeg = totalNodes > 0 ? (totalEdges * 2 / totalNodes) : 0;
+            const minCycle = features.filter(f => f.shortestCycleLen > 0).map(f => f.shortestCycleLen);
+            f = {
+                nodeCount: totalNodes, edgeCount: totalEdges,
+                avgDegree: avgDeg, cycleRank: totalCycles,
+                shortestCycleLen: minCycle.length ? Math.min(...minCycle) : 0
+            };
+            countSpan.textContent = components.length + ' 个独立知识网';
+        } else {
+            f = features[parseInt(idx)];
+            countSpan.textContent = '节点 ' + f.nodeCount + ' · 边 ' + f.edgeCount;
+        }
+        document.getElementById('ga-nodes').textContent = f.nodeCount;
+        document.getElementById('ga-edges').textContent = f.edgeCount;
+        document.getElementById('ga-avg-degree').textContent = f.avgDegree.toFixed(1);
+        document.getElementById('ga-cycles').textContent = f.cycleRank;
+
+        const detail = document.getElementById('graph-analysis-detail');
+        const parts = [];
+        parts.push('平均每个节点连接 ' + f.avgDegree.toFixed(1) + ' 条边');
+        if (f.cycleRank > 0) {
+            parts.push('存在 ' + f.cycleRank + ' 个独立环（圈秩）');
+            if (f.shortestCycleLen > 0) parts.push('最短环长度为 ' + f.shortestCycleLen);
+        } else {
+            parts.push('无环（树结构或孤立节点）');
+        }
+        detail.textContent = parts.join('；');
+    }
+
+    select.onchange = () => updateMetrics(select.value);
+    updateMetrics('all');
 }
 
 // ============================================================
