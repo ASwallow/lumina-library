@@ -1236,6 +1236,92 @@ body.light-theme .calc-sci { border-top-color: rgba(0,0,0,0.06); }
 body.light-theme .calc-sci-btn { background: rgba(0,0,0,0.04); }
 body.light-theme .calc-sci-btn:hover { background: rgba(0,0,0,0.08); }
 
+/* 进制转换 */
+.calc-base {
+    padding: 10px 12px 8px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+body.light-theme .calc-base { border-top-color: rgba(0,0,0,0.06); }
+.calc-base.hidden { display: none; }
+.calc-base-row {
+    display: flex; align-items: flex-end; gap: 8px; margin-bottom: 10px;
+}
+.calc-base-col { flex: 1; }
+.calc-base-label {
+    display: block; font-size: 11px; color: var(--text-tertiary);
+    margin-bottom: 4px; font-weight: 500;
+}
+.calc-base-sel-wrap { display: flex; flex-direction: column; gap: 4px; }
+.calc-base-sel {
+    width: 100%; padding: 6px 8px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06); color: var(--text-primary);
+    font-size: 12px; cursor: pointer; outline: none; box-sizing: border-box;
+}
+body.light-theme .calc-base-sel {
+    border-color: rgba(0,0,0,0.12); background: rgba(0,0,0,0.04);
+}
+.calc-base-sel:focus { border-color: var(--accent); }
+.calc-base-custom {
+    width: 100%; padding: 6px 6px; border-radius: 8px; box-sizing: border-box;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06); color: var(--text-primary);
+    font-size: 12px; text-align: center; outline: none;
+}
+body.light-theme .calc-base-custom {
+    border-color: rgba(0,0,0,0.12); background: rgba(0,0,0,0.04);
+}
+.calc-base-custom:focus { border-color: var(--accent); }
+.calc-base-custom.hidden { display: none; }
+.calc-base-swap {
+    flex-shrink: 0; width: 32px; height: 32px;
+    border: 1px solid rgba(255,255,255,0.12); border-radius: 8px;
+    background: rgba(255,255,255,0.06); color: var(--accent);
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: background 0.15s, transform 0.1s;
+}
+.calc-base-swap:hover { background: rgba(255,255,255,0.12); }
+.calc-base-swap:active { transform: scale(0.9); }
+body.light-theme .calc-base-swap {
+    border-color: rgba(0,0,0,0.12); background: rgba(0,0,0,0.04);
+}
+.calc-base-fields { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+.calc-base-field { }
+.calc-base-input {
+    width: 100%; padding: 8px 10px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255,255,255,0.06); color: var(--text-primary);
+    font-size: 14px; font-family: 'Cascadia Code', 'Consolas', monospace;
+    outline: none; box-sizing: border-box;
+}
+body.light-theme .calc-base-input {
+    border-color: rgba(0,0,0,0.12); background: rgba(0,0,0,0.04);
+}
+.calc-base-input:focus { border-color: var(--accent); }
+.calc-base-result {
+    padding: 8px 10px; border-radius: 8px;
+    border: 1px solid rgba(255,255,255,0.08);
+    background: rgba(255,255,255,0.03);
+    font-size: 14px; font-family: 'Cascadia Code', 'Consolas', monospace;
+    color: var(--accent); word-break: break-all; min-height: 20px;
+}
+body.light-theme .calc-base-result {
+    border-color: rgba(0,0,0,0.08); background: rgba(0,0,0,0.02);
+}
+.calc-base-all {
+    display: grid; grid-template-columns: 1fr; gap: 3px;
+}
+.calc-base-all.hidden { display: none; }
+.calc-base-tag {
+    padding: 4px 8px; border-radius: 6px;
+    background: rgba(255,255,255,0.04);
+    font-size: 11px; color: var(--text-secondary);
+    font-family: 'Cascadia Code', 'Consolas', monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+body.light-theme .calc-base-tag { background: rgba(0,0,0,0.03); }
+.calc-base-tag strong { color: var(--accent); font-weight: 600; }
+
 /* 数字键盘 */
 .calc-grid {
     display: grid;
@@ -1667,6 +1753,9 @@ body.light-theme .calc-btn.op:hover { background: rgba(99,102,241,0.2); }
     75%  { transform: translate(-50%, -50%) rotate(7deg)   scale(1.42); }
     100% { transform: translate(-50%, -50%) rotate(0deg)   scale(1.4); }
 }
+body.light-theme {
+    --penrose-opacity: 0.18;
+}
 
 /* ============================================================
    设置页
@@ -1790,21 +1879,78 @@ body.light-theme .settings-section:hover {
     gap: 16px;
 }
 .note-card {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: 12px;
+    background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15);
+    border-radius: 16px;
     padding: 16px;
     cursor: pointer;
-    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
+    transition: transform 0.2s, box-shadow 0.2s, border-color 0.2s, background 0.2s;
+    backdrop-filter: blur(20px) saturate(1.4);
+    -webkit-backdrop-filter: blur(20px) saturate(1.4);
     position: relative;
     min-height: 140px;
+    overflow: hidden;
+}
+body.light-theme .note-card {
+    background: rgba(255,255,255,0.35);
+    border-color: rgba(255,255,255,0.4);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.06);
+}
+.note-card::before {
+    content: '';
+    position: absolute; top: 0; left: 0; right: 0;
+    height: 4px;
+    border-radius: 16px 16px 0 0;
+    background: var(--note-accent, transparent);
+}
+.note-card-color-bar {
+    position: absolute; top: 0; left: 0; right: 0; height: 4px;
+    border-radius: 16px 16px 0 0;
 }
 .note-card:hover {
     transform: translateY(-3px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.15);
-    border-color: var(--accent-bg-hover);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    border-color: rgba(255,255,255,0.25);
+    background: rgba(255,255,255,0.12);
+}
+body.light-theme .note-card:hover {
+    background: rgba(255,255,255,0.5);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+}
+
+/* 笔记颜色选择器 */
+.note-color-wrap { position: relative; }
+.note-color-palette {
+    position: absolute; top: 100%; right: 0; z-index: 300;
+    display: flex; gap: 6px; flex-wrap: wrap;
+    padding: 10px; border-radius: 12px;
+    background: rgba(30,30,40,0.95);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255,255,255,0.12);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+    width: 160px;
+}
+body.light-theme .note-color-palette {
+    background: rgba(255,255,255,0.95);
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.12);
+}
+.note-color-palette.hidden { display: none; }
+.note-color-swatch {
+    width: 28px; height: 28px; border-radius: 8px;
+    border: 2px solid transparent; cursor: pointer;
+    transition: transform 0.15s, border-color 0.15s;
+}
+.note-color-swatch:hover { transform: scale(1.15); }
+.note-color-swatch.active { border-color: var(--accent); }
+.note-color-swatch.none {
+    background: linear-gradient(135deg, rgba(255,255,255,0.1) 25%, transparent 25%, transparent 50%, rgba(255,255,255,0.1) 50%, rgba(255,255,255,0.1) 75%, transparent 75%);
+    background-size: 8px 8px;
+    border: 1px dashed rgba(255,255,255,0.3);
+}
+body.light-theme .note-color-swatch.none {
+    border-color: rgba(0,0,0,0.2);
 }
 .note-card-title {
     font-size: 15px;

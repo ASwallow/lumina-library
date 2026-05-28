@@ -2277,15 +2277,14 @@ function initFabGroup() {
         searchFab.title = inReader ? '阅读中不可用' : '搜索书籍';
     });
     observer.observe(document.getElementById('reader-overlay'), { attributes: true, attributeFilter: ['class'] });
+
+    // 图标颜色：亮黑暗白跟随主题，由 CSS 控制
 }
 
 // ============================================================
 //  计算器
 // ============================================================
-// ============================================================
-//  计算器
-// ============================================================
-const calc = { expr: '', display: '0', sci: false, rad: false, justEval: false };
+const calc = { expr: '', display: '0', sci: false, base: false, rad: false, justEval: false };
 
 function toggleCalc(group) {
     const panel = document.getElementById('calc-panel');
@@ -2564,6 +2563,174 @@ function tokenize(expr) {
     return tokens;
 }
 
+// ---- 进制转换 ----
+function getBaseFrom() {
+    const sel = document.getElementById('calc-base-from').value;
+    if (sel === 'n') {
+        const v = parseInt(document.getElementById('calc-base-from-n').value);
+        return (v >= 2 && v <= 36) ? v : 10;
+    }
+    return parseInt(sel);
+}
+function getBaseTo() {
+    const sel = document.getElementById('calc-base-to').value;
+    if (sel === 'n') {
+        const v = parseInt(document.getElementById('calc-base-to-n').value);
+        return (v >= 2 && v <= 36) ? v : 16;
+    }
+    return parseInt(sel);
+}
+
+function convertBase() {
+    const input = document.getElementById('calc-base-input').value.trim();
+    const resultEl = document.getElementById('calc-base-result');
+    if (!input) { resultEl.textContent = '0'; renderBaseAll(); return; }
+    const fromBase = getBaseFrom();
+    const toBase = getBaseTo();
+    // 解析输入：支持负数和小数
+    const negative = input.startsWith('-');
+    const raw = negative ? input.slice(1) : input;
+    const parts = raw.split('.');
+    const intPart = parts[0];
+    const fracPart = parts[1] || '';
+
+    // 验证整数部分
+    const validChars = '0123456789abcdefghijklmnopqrstuvwxyz'.slice(0, fromBase);
+    for (const ch of intPart.toLowerCase()) {
+        if (!validChars.includes(ch)) { resultEl.textContent = '非法字符'; renderBaseAll(); return; }
+    }
+    for (const ch of fracPart.toLowerCase()) {
+        if (!validChars.includes(ch)) { resultEl.textContent = '非法字符'; renderBaseAll(); return; }
+    }
+
+    // 整数部分转十进制
+    let decInt = 0n;
+    try {
+        decInt = BigInt(parseInt(intPart, fromBase));
+    } catch(e) { resultEl.textContent = 'Error'; renderBaseAll(); return; }
+
+    // 小数部分转十进制
+    let decFrac = 0;
+    if (fracPart) {
+        for (let i = 0; i < fracPart.length; i++) {
+            const digit = parseInt(fracPart[i], fromBase);
+            decFrac += digit / Math.pow(fromBase, i + 1);
+        }
+    }
+
+    // 十进制转目标进制
+    function toBaseStr(intVal, fracVal, base) {
+        const intStr = intVal === 0n ? '0' : intVal.toString(base).toUpperCase();
+        if (fracVal === 0) return intStr;
+        // 小数部分最多转换 12 位
+        let frac = fracVal;
+        let fracStr = '';
+        const seen = new Set();
+        for (let i = 0; i < 12 && frac > 0; i++) {
+            frac *= base;
+            const digit = Math.floor(frac);
+            fracStr += digit.toString(base).toUpperCase();
+            frac -= digit;
+        }
+        return intStr + '.' + fracStr;
+    }
+
+    const result = toBaseStr(decInt, decFrac, toBase);
+    const sign = negative && decInt !== 0n ? '-' : '';
+    resultEl.textContent = sign + result;
+    renderBaseAll();
+}
+
+function renderBaseAll() {
+    const input = document.getElementById('calc-base-input').value.trim();
+    const container = document.getElementById('calc-base-all');
+    if (!input) { container.classList.add('hidden'); container.innerHTML = ''; return; }
+    container.classList.remove('hidden');
+
+    const fromBase = getBaseFrom();
+    const negative = input.startsWith('-');
+    const raw = negative ? input.slice(1) : input;
+    const parts = raw.split('.');
+    const intPart = parts[0];
+    const fracPart = parts[1] || '';
+
+    const validChars = '0123456789abcdefghijklmnopqrstuvwxyz'.slice(0, fromBase);
+    for (const ch of intPart.toLowerCase()) {
+        if (!validChars.includes(ch)) { container.innerHTML = ''; return; }
+    }
+    for (const ch of fracPart.toLowerCase()) {
+        if (!validChars.includes(ch)) { container.innerHTML = ''; return; }
+    }
+
+    let decInt = 0n;
+    try { decInt = BigInt(parseInt(intPart, fromBase)); } catch(e) { container.innerHTML = ''; return; }
+    let decFrac = 0;
+    if (fracPart) {
+        for (let i = 0; i < fracPart.length; i++) {
+            decFrac += parseInt(fracPart[i], fromBase) / Math.pow(fromBase, i + 1);
+        }
+    }
+
+    function toBaseStr(intVal, fracVal, base) {
+        const intStr = intVal === 0n ? '0' : intVal.toString(base).toUpperCase();
+        if (fracVal === 0) return intStr;
+        let frac = fracVal, fracStr = '';
+        for (let i = 0; i < 12 && frac > 0; i++) {
+            frac *= base;
+            const digit = Math.floor(frac);
+            fracStr += digit.toString(base).toUpperCase();
+            frac -= digit;
+        }
+        return intStr + '.' + fracStr;
+    }
+
+    const bases = [
+        { label: 'BIN', base: 2 },
+        { label: 'OCT', base: 8 },
+        { label: 'DEC', base: 10 },
+        { label: 'HEX', base: 16 },
+    ];
+    const sign = negative && decInt !== 0n ? '-' : '';
+    container.innerHTML = bases.map(b => {
+        const val = sign + toBaseStr(decInt, decFrac, b.base);
+        return '<div class="calc-base-tag"><strong>' + b.label + '</strong> ' + escHtml(val) + '</div>';
+    }).join('');
+}
+
+function initBaseConversion() {
+    const inputEl = document.getElementById('calc-base-input');
+    const fromSel = document.getElementById('calc-base-from');
+    const toSel = document.getElementById('calc-base-to');
+    const fromN = document.getElementById('calc-base-from-n');
+    const toN = document.getElementById('calc-base-to-n');
+    const swapBtn = document.getElementById('calc-base-swap');
+
+    inputEl.addEventListener('input', convertBase);
+    fromSel.addEventListener('change', () => {
+        fromN.classList.toggle('hidden', fromSel.value !== 'n');
+        convertBase();
+    });
+    toSel.addEventListener('change', () => {
+        toN.classList.toggle('hidden', toSel.value !== 'n');
+        convertBase();
+    });
+    fromN.addEventListener('input', convertBase);
+    toN.addEventListener('input', convertBase);
+
+    swapBtn.addEventListener('click', () => {
+        const fv = fromSel.value, tv = toSel.value;
+        fromSel.value = tv; toSel.value = fv;
+        fromN.classList.toggle('hidden', fromSel.value !== 'n');
+        toN.classList.toggle('hidden', toSel.value !== 'n');
+        // 交换后把结果填入输入框
+        const result = document.getElementById('calc-base-result').textContent;
+        if (result && result !== 'Error' && result !== '非法字符') {
+            inputEl.value = result;
+        }
+        convertBase();
+    });
+}
+
 function initCalc() {
     // 数字键盘
     document.getElementById('calc-grid').addEventListener('click', (e) => {
@@ -2580,9 +2747,14 @@ function initCalc() {
         b.addEventListener('click', () => {
             document.querySelectorAll('.calc-mode-btn').forEach(x => x.classList.remove('active'));
             b.classList.add('active');
-            calc.sci = b.dataset.calcMode === 'scientific';
+            const mode = b.dataset.calcMode;
+            calc.sci = mode === 'scientific';
+            calc.base = mode === 'base';
             document.getElementById('calc-sci').classList.toggle('hidden', !calc.sci);
-            // 切换后重新定位，防止溢出
+            document.getElementById('calc-base').classList.toggle('hidden', !calc.base);
+            document.getElementById('calc-grid').classList.toggle('hidden', calc.base);
+            document.getElementById('calc-display').classList.toggle('hidden', calc.base);
+            if (calc.base) renderBaseAll();
             clampCalcPosition();
         });
     });
@@ -2601,6 +2773,8 @@ function initCalc() {
             closeCalc();
         }
     });
+    // 进制转换初始化
+    initBaseConversion();
 }
 
 // ============================================================
@@ -3210,23 +3384,34 @@ function renderItemList(containerId, items) {
 
 // ---- 知识图谱分析 ----
 function renderGraphAnalysis() {
-    // 构建节点和边
+    // 构建有向图：A写[[B]] → 边 B→A（B被A引用）
     const allNodes = standaloneNotes.map(n => n.id);
     const nodeTitleMap = {};
     standaloneNotes.forEach(n => { nodeTitleMap[n.id] = n.title || '未命名'; });
-    const adj = {};
-    allNodes.forEach(id => { adj[id] = []; });
-    const allEdges = [];
+
+    // 有向边（去重）
+    const directedEdges = [];
+    const edgeSet = new Set();
+    // 无向邻接表（用于弱连通分量检测）
+    const undirAdj = {};
+    allNodes.forEach(id => { undirAdj[id] = []; });
+
     standaloneNotes.forEach(n => {
         (n.links || []).forEach(targetId => {
-            if (adj[targetId] !== undefined && targetId !== n.id) {
-                adj[n.id].push(targetId);
-                if (n.id < targetId) allEdges.push([n.id, targetId]);
+            if (allNodes.includes(targetId) && targetId !== n.id) {
+                const key = targetId + '->' + n.id; // B→A
+                if (!edgeSet.has(key)) {
+                    edgeSet.add(key);
+                    directedEdges.push({ from: targetId, to: n.id });
+                    // 无向邻接
+                    if (!undirAdj[targetId].includes(n.id)) undirAdj[targetId].push(n.id);
+                    if (!undirAdj[n.id].includes(targetId)) undirAdj[n.id].push(targetId);
+                }
             }
         });
     });
 
-    // BFS 连通分量
+    // BFS 弱连通分量
     const visited = new Set();
     const components = [];
     allNodes.forEach(id => {
@@ -3237,7 +3422,7 @@ function renderGraphAnalysis() {
         while (queue.length) {
             const cur = queue.shift();
             comp.push(cur);
-            for (const nb of adj[cur]) {
+            for (const nb of undirAdj[cur]) {
                 if (!visited.has(nb)) {
                     visited.add(nb);
                     queue.push(nb);
@@ -3247,28 +3432,44 @@ function renderGraphAnalysis() {
         components.push(comp);
     });
 
+    // 去重无向连接（A→B 和 B→A 算 1 条连接），用于统计
+    const undirEdges = [];
+    const undirEdgeSet = new Set();
+    directedEdges.forEach(e => {
+        const key = e.from < e.to ? e.from + '|' + e.to : e.to + '|' + e.from;
+        if (!undirEdgeSet.has(key)) {
+            undirEdgeSet.add(key);
+            undirEdges.push({ a: e.from, b: e.to });
+        }
+    });
+
     // 计算每个子图的特征
     function compFeatures(comp) {
         const nodeSet = new Set(comp);
-        let edgeCount = 0;
-        allEdges.forEach(([a, b]) => { if (nodeSet.has(a) && nodeSet.has(b)) edgeCount++; });
         const n = comp.length;
-        const avgDegree = n > 0 ? (edgeCount * 2 / n) : 0;
-        // 独立环数（圈秩）：E - V + 1（仅对连通图）
-        const cycleRank = Math.max(0, edgeCount - n + 1);
+        // 统计无向连接数和有向边数
+        let connectionCount = 0;
+        let directedCount = 0;
+        undirEdges.forEach(e => { if (nodeSet.has(e.a) && nodeSet.has(e.b)) connectionCount++; });
+        directedEdges.forEach(e => { if (nodeSet.has(e.from) && nodeSet.has(e.to)) directedCount++; });
+        // 平均度 = 2 × 无向连接数 / 节点数
+        const avgDegree = n > 0 ? (connectionCount * 2 / n) : 0;
+        // 无向独立环（圈秩）= 无向连接数 - 节点数 + 1
+        const undirCycleRank = Math.max(0, connectionCount - n + 1);
+        // 有向独立环（圈秩）= 有向边数 - 节点数 + 1
+        const dirCycleRank = Math.max(0, directedCount - n + 1);
 
-        // DFS 找最短环
+        // BFS 找最短环（基于无向连接）
         let shortestCycleLen = Infinity;
-        if (n > 1 && edgeCount >= n) {
+        if (n > 1 && connectionCount >= n) {
             const subAdj = {};
             comp.forEach(id => { subAdj[id] = []; });
-            allEdges.forEach(([a, b]) => {
-                if (nodeSet.has(a) && nodeSet.has(b)) {
-                    subAdj[a].push(b);
-                    subAdj[b].push(a);
+            undirEdges.forEach(e => {
+                if (nodeSet.has(e.a) && nodeSet.has(e.b)) {
+                    subAdj[e.a].push(e.b);
+                    subAdj[e.b].push(e.a);
                 }
             });
-            // 对每个节点做 BFS 找最短环
             comp.forEach(startId => {
                 const dist = {};
                 const parent = {};
@@ -3282,8 +3483,7 @@ function renderGraphAnalysis() {
                             dist[nb] = dist[cur] + 1;
                             parent[nb] = cur;
                             queue.push(nb);
-                        } else if (parent[cur] !== nb && parent[nb] !== cur) {
-                            // 发现环
+                        } else if (parent[cur] !== nb) {
                             const cycleLen = dist[cur] + dist[nb] + 1;
                             if (cycleLen < shortestCycleLen) shortestCycleLen = cycleLen;
                         }
@@ -3292,7 +3492,7 @@ function renderGraphAnalysis() {
             });
         }
         if (shortestCycleLen === Infinity) shortestCycleLen = 0;
-        return { nodeCount: n, edgeCount, avgDegree, cycleRank, shortestCycleLen };
+        return { nodeCount: n, edgeCount: connectionCount, avgDegree, undirCycleRank, dirCycleRank, shortestCycleLen };
     }
 
     const features = components.map(comp => ({ ids: comp, ...compFeatures(comp) }));
@@ -3311,33 +3511,35 @@ function renderGraphAnalysis() {
     function updateMetrics(idx) {
         let f;
         if (idx === 'all') {
-            // 汇总所有子图
             const totalNodes = features.reduce((s, f) => s + f.nodeCount, 0);
             const totalEdges = features.reduce((s, f) => s + f.edgeCount, 0);
-            const totalCycles = features.reduce((s, f) => s + f.cycleRank, 0);
+            const totalUndirCycles = features.reduce((s, f) => s + f.undirCycleRank, 0);
+            const totalDirCycles = features.reduce((s, f) => s + f.dirCycleRank, 0);
             const avgDeg = totalNodes > 0 ? (totalEdges * 2 / totalNodes) : 0;
             const minCycle = features.filter(f => f.shortestCycleLen > 0).map(f => f.shortestCycleLen);
             f = {
                 nodeCount: totalNodes, edgeCount: totalEdges,
-                avgDegree: avgDeg, cycleRank: totalCycles,
+                avgDegree: avgDeg, undirCycleRank: totalUndirCycles, dirCycleRank: totalDirCycles,
                 shortestCycleLen: minCycle.length ? Math.min(...minCycle) : 0
             };
             countSpan.textContent = components.length + ' 个独立知识网';
         } else {
             f = features[parseInt(idx)];
-            countSpan.textContent = '节点 ' + f.nodeCount + ' · 边 ' + f.edgeCount;
+            countSpan.textContent = '节点 ' + f.nodeCount + ' · 连接 ' + f.edgeCount;
         }
         document.getElementById('ga-nodes').textContent = f.nodeCount;
         document.getElementById('ga-edges').textContent = f.edgeCount;
         document.getElementById('ga-avg-degree').textContent = f.avgDegree.toFixed(1);
-        document.getElementById('ga-cycles').textContent = f.cycleRank;
+        document.getElementById('ga-cycles-undir').textContent = f.undirCycleRank;
+        document.getElementById('ga-cycles-dir').textContent = f.dirCycleRank;
+        document.getElementById('ga-shortest').textContent = f.shortestCycleLen || '-';
 
         const detail = document.getElementById('graph-analysis-detail');
         const parts = [];
         parts.push('平均每个节点连接 ' + f.avgDegree.toFixed(1) + ' 条边');
-        if (f.cycleRank > 0) {
-            parts.push('存在 ' + f.cycleRank + ' 个独立环（圈秩）');
-            if (f.shortestCycleLen > 0) parts.push('最短环长度为 ' + f.shortestCycleLen);
+        if (f.undirCycleRank > 0 || f.dirCycleRank > 0) {
+            parts.push('无向独立环 ' + f.undirCycleRank + ' 个，有向独立环 ' + f.dirCycleRank + ' 个');
+            if (f.shortestCycleLen > 0) parts.push('最短环长度 ' + f.shortestCycleLen);
         } else {
             parts.push('无环（树结构或孤立节点）');
         }
@@ -4439,6 +4641,33 @@ function bindEvents() {
     document.getElementById('btn-note-clear-draw').addEventListener('click', () => {
         if (noteEditorSignaturePad) { noteEditorSignaturePad.clear(); saveCurrentNoteEditor(); }
     });
+    // 笔记颜色选择器
+    const NOTE_COLORS = ['', '#818cf8', '#c084fc', '#22d3ee', '#34d399', '#fb7185', '#f59e0b', '#3b82f6'];
+    const colorPalette = document.getElementById('note-color-palette');
+    colorPalette.innerHTML = NOTE_COLORS.map((c, i) =>
+        c ? `<div class="note-color-swatch${i === 0 ? ' none' : ''}" data-color="${c}" style="background:${c}"></div>`
+          : `<div class="note-color-swatch none active" data-color="" title="无颜色"></div>`
+    ).join('');
+    document.getElementById('btn-note-color').addEventListener('click', (e) => {
+        e.stopPropagation();
+        colorPalette.classList.toggle('hidden');
+    });
+    colorPalette.addEventListener('click', (e) => {
+        const swatch = e.target.closest('.note-color-swatch');
+        if (!swatch) return;
+        const note = getCurrentEditNote();
+        if (!note) return;
+        note.color = swatch.dataset.color;
+        note.updatedAt = Date.now();
+        saveStandaloneNotes();
+        colorPalette.querySelectorAll('.note-color-swatch').forEach(s => s.classList.remove('active'));
+        swatch.classList.add('active');
+    });
+    document.addEventListener('click', (e) => {
+        if (!document.getElementById('note-color-wrap').contains(e.target)) {
+            colorPalette.classList.add('hidden');
+        }
+    });
 
     // ---- 笔记关系图 ----
     document.getElementById('btn-close-graph').addEventListener('click', closeGraph);
@@ -4497,8 +4726,10 @@ function renderNotesPage() {
         const preview = (note.content || '').replace(/[#*\[\]`>_~-]/g, '').substring(0, 120);
         const linkCount = (note.links || []).length;
         const dateStr = new Date(note.updatedAt || note.createdAt).toLocaleDateString('zh-CN');
+        const colorBar = note.color ? `<div class="note-card-color-bar" style="background:${escHtml(note.color)}"></div>` : '';
         html += `
             <div class="note-card" data-id="${note.id}">
+                ${colorBar}
                 <div class="note-card-title">${escHtml(note.title || '未命名笔记')}</div>
                 <div class="note-card-preview">${escHtml(preview) || '暂无内容'}</div>
                 <div class="note-card-meta">
@@ -4526,6 +4757,7 @@ function createNewNote() {
         content: '',
         drawing: null,
         links: [],
+        color: '',
         createdAt: Date.now(),
         updatedAt: Date.now()
     };
@@ -4566,6 +4798,11 @@ function openNoteEditor(noteId) {
 
     const meta = `创建于 ${new Date(note.createdAt).toLocaleString('zh-CN')} · 更新于 ${new Date(note.updatedAt).toLocaleString('zh-CN')}`;
     document.getElementById('note-editor-meta').textContent = meta;
+
+    // 设置颜色选择器状态
+    document.querySelectorAll('#note-color-palette .note-color-swatch').forEach(s => {
+        s.classList.toggle('active', s.dataset.color === (note.color || ''));
+    });
 
     // 重置tab
     currentNoteEditorTab = 'edit';
@@ -5093,11 +5330,12 @@ async function openGraph() {
     const nodeMap = {};
     nodes.forEach(n => nodeMap[n.id] = n);
 
+    // 有向边：A写[[B]] → B→A（B被A引用，箭头从B指向A）
     const edges = [];
     standaloneNotes.forEach(n => {
         (n.links || []).forEach(targetId => {
             if (nodeMap[targetId]) {
-                edges.push({ source: n.id, target: targetId });
+                edges.push({ source: targetId, target: n.id });
             }
         });
     });
@@ -5162,18 +5400,38 @@ async function openGraph() {
         // 绘制
         ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-        // 边 — 使用设置的颜色和粗细，亮/暗主题自适应透明度
+        // 有向边 — 带箭头
         const edgeAlpha = isLight ? 0.45 : 0.35;
-        ctx.strokeStyle = edgeColor + Math.round(edgeAlpha * 255).toString(16).padStart(2, '0');
+        const edgeColorFull = edgeColor + Math.round(edgeAlpha * 255).toString(16).padStart(2, '0');
         ctx.lineWidth = edgeWidth;
         ctx.lineCap = 'round';
+        const arrowLen = 10 + edgeWidth * 2;
+        const arrowAngle = Math.PI / 7;
         edges.forEach(e => {
             const a = nodeMap[e.source], b = nodeMap[e.target];
             if (!a || !b) return;
+            const dx = b.x - a.x, dy = b.y - a.y;
+            const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+            // 箭头终点缩进到节点边缘
+            const endX = b.x - (dx / dist) * (b.radius + 2);
+            const endY = b.y - (dy / dist) * (b.radius + 2);
+            const startX = a.x + (dx / dist) * (a.radius + 2);
+            const startY = a.y + (dy / dist) * (a.radius + 2);
+            // 线段
+            ctx.strokeStyle = edgeColorFull;
             ctx.beginPath();
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
+            ctx.moveTo(startX, startY);
+            ctx.lineTo(endX, endY);
             ctx.stroke();
+            // 箭头
+            const angle = Math.atan2(endY - startY, endX - startX);
+            ctx.fillStyle = edgeColorFull;
+            ctx.beginPath();
+            ctx.moveTo(endX, endY);
+            ctx.lineTo(endX - arrowLen * Math.cos(angle - arrowAngle), endY - arrowLen * Math.sin(angle - arrowAngle));
+            ctx.lineTo(endX - arrowLen * Math.cos(angle + arrowAngle), endY - arrowLen * Math.sin(angle + arrowAngle));
+            ctx.closePath();
+            ctx.fill();
         });
 
         // 节点

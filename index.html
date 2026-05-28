@@ -177,9 +177,11 @@
                 </div>
                 <div class="stat-cards stat-cards-sm" id="graph-analysis-metrics">
                     <div class="stat-card"><div class="stat-number" id="ga-nodes">0</div><div class="stat-label">节点数</div></div>
-                    <div class="stat-card"><div class="stat-number" id="ga-edges">0</div><div class="stat-label">边数</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-edges">0</div><div class="stat-label">连接数</div></div>
                     <div class="stat-card"><div class="stat-number" id="ga-avg-degree">0</div><div class="stat-label">平均度</div></div>
-                    <div class="stat-card"><div class="stat-number" id="ga-cycles">0</div><div class="stat-label">独立环数</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-cycles-undir">0</div><div class="stat-label">无向独立环</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-cycles-dir">0</div><div class="stat-label">有向独立环</div></div>
+                    <div class="stat-card"><div class="stat-number" id="ga-shortest">0</div><div class="stat-label">最短环长</div></div>
                 </div>
                 <div id="graph-analysis-detail" style="margin-top:8px;font-size:12px;color:var(--text-secondary);line-height:1.8;"></div>
             </div>
@@ -468,6 +470,12 @@
             <div class="note-editor-header">
                 <input type="text" id="note-editor-title" class="note-editor-title-input" placeholder="笔记标题...">
                 <div class="note-editor-actions">
+                    <div class="note-color-wrap" id="note-color-wrap">
+                        <button class="btn-icon" id="btn-note-color" title="封面颜色">
+                            <i data-lucide="palette"></i>
+                        </button>
+                        <div class="note-color-palette hidden" id="note-color-palette"></div>
+                    </div>
                     <button class="btn btn-sm" id="btn-note-diff-read" title="与PDF差分阅读">
                         <i data-lucide="columns-2"></i> 差分阅读
                     </button>
@@ -582,6 +590,7 @@
             <div class="calc-mode-toggle">
                 <button class="calc-mode-btn active" data-calc-mode="simple">简易</button>
                 <button class="calc-mode-btn" data-calc-mode="scientific">科学</button>
+                <button class="calc-mode-btn" data-calc-mode="base">进制</button>
             </div>
             <button class="calc-angle-btn" id="calc-angle-btn" title="角度/弧度">Deg</button>
             <button class="btn-icon" id="btn-close-calc"><i data-lucide="x"></i></button>
@@ -620,6 +629,48 @@
             <button class="calc-sci-btn" data-fn="ee">EE</button>
             <button class="calc-sci-btn" data-fn="mod">MOD</button>
             <button class="calc-sci-btn" data-fn="ran">RAN</button>
+        </div>
+        <div class="calc-base hidden" id="calc-base">
+            <div class="calc-base-row">
+                <div class="calc-base-col">
+                    <label class="calc-base-label">源进制</label>
+                    <div class="calc-base-sel-wrap">
+                        <select class="calc-base-sel" id="calc-base-from">
+                            <option value="2">二进制</option>
+                            <option value="10" selected>十进制</option>
+                            <option value="16">十六进制</option>
+                            <option value="n">自选</option>
+                        </select>
+                        <input class="calc-base-custom hidden" id="calc-base-from-n" type="number" min="2" max="36" placeholder="2~36" value="8">
+                    </div>
+                </div>
+                <button class="calc-base-swap" id="calc-base-swap" title="交换">
+                    <i data-lucide="arrow-left-right"></i>
+                </button>
+                <div class="calc-base-col">
+                    <label class="calc-base-label">目标进制</label>
+                    <div class="calc-base-sel-wrap">
+                        <select class="calc-base-sel" id="calc-base-to">
+                            <option value="2">二进制</option>
+                            <option value="10">十进制</option>
+                            <option value="16" selected>十六进制</option>
+                            <option value="n">自选</option>
+                        </select>
+                        <input class="calc-base-custom hidden" id="calc-base-to-n" type="number" min="2" max="36" placeholder="2~36" value="16">
+                    </div>
+                </div>
+            </div>
+            <div class="calc-base-fields">
+                <div class="calc-base-field">
+                    <label class="calc-base-label">输入值</label>
+                    <input class="calc-base-input" id="calc-base-input" placeholder="输入数值" autocomplete="off" spellcheck="false">
+                </div>
+                <div class="calc-base-field">
+                    <label class="calc-base-label">转换结果</label>
+                    <div class="calc-base-result" id="calc-base-result">0</div>
+                </div>
+            </div>
+            <div class="calc-base-all" id="calc-base-all"></div>
         </div>
         <div class="calc-grid" id="calc-grid">
             <button class="calc-btn fn" data-val="C">C</button>
